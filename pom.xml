@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<artifactId>marketplace-utilities</artifactId>
+	<version>1.0</version>
+
+	<parent>
+		<artifactId>syndesis-qe-parent</artifactId>
+		<groupId>io.syndesis.qe</groupId>
+		<version>0.1-SNAPSHOT</version>
+	</parent>
+
+	<distributionManagement>
+		<repository>
+			<id>fuse-qe-repo</id>
+			<name>Fuse QE Repository</name>
+			<url>http://nexus.fuse-qe.eng.rdu2.redhat.com/repository/fuse-qe-repo/</url>
+		</repository>
+		<snapshotRepository>
+			<id>fuse-qe-snapshots</id>
+			<name>Fuse QE Snapshots Repository</name>
+			<url>http://nexus.fuse-qe.eng.rdu2.redhat.com/repository/fuse-qe-snapshots/</url>
+		</snapshotRepository>
+	</distributionManagement>
+
+	<dependencies>
+		<dependency>
+			<groupId>ch.qos.logback</groupId>
+			<artifactId>logback-classic</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.commons</groupId>
+			<artifactId>commons-lang3</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>io.fabric8</groupId>
+			<artifactId>openshift-client</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.projectlombok</groupId>
+			<artifactId>lombok</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>cz.xtf</groupId>
+			<artifactId>core</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.json</groupId>
+			<artifactId>json</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.apache.httpcomponents</groupId>
+			<artifactId>httpclient</artifactId>
+			<version>4.5.12</version>
+		</dependency>
+
+		<dependency>
+			<groupId>commons-io</groupId>
+			<artifactId>commons-io</artifactId>
+			<version>2.6</version>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>3.8.1</version>
+				<configuration>
+					<source>1.8</source>
+					<target>1.8</target>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+
+</project>

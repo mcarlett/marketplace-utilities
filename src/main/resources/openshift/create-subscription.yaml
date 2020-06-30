@@ -1,0 +1,12 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: PACKAGE_NAME
+  namespace: OPENSHIFT_PROJECT
+spec:
+  channel: alpha
+  installPlanApproval: Automatic
+  startingCSV: STARTING_CSV
+  name: PACKAGE_NAME
+  source: PACKAGE_NAME-opsrc
+  sourceNamespace: openshift-marketplace
