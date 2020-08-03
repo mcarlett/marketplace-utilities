@@ -5,6 +5,7 @@ import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretList;
 import io.fabric8.kubernetes.api.model.apps.DeploymentList;
 import io.fabric8.kubernetes.client.dsl.base.CustomResourceDefinitionContext;
+import io.fabric8.openshift.api.model.OpenshiftRole;
 import io.syndesis.qe.marketplace.util.HelperFunctions;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -60,11 +61,11 @@ public class OpenShiftService {
     }
 
     public void deployOperator() throws IOException {
+        createNamespace();
+        createPullSecret();
         disableDefaultSources();
         createOpsrcToken();
         createOpsrc();
-        createNamespace();
-        createPullSecret();
         createOperatorgroup();
         createSubscription();
 
@@ -97,7 +98,7 @@ public class OpenShiftService {
         }
     }
 
-    public void deleteOperatorSource() {
+    public void deleteOperatorSource() throws IOException {
         log.info("Deleting operator source for quay package '" + quayPackageName + "'");
         CustomResourceDefinitionContext operatorSourceCrdContext = new CustomResourceDefinitionContext.Builder()
                 .withGroup("operators.coreos.com")
@@ -108,6 +109,11 @@ public class OpenShiftService {
 
         openShiftClient.customResource(operatorSourceCrdContext)
                 .delete("openshift-marketplace", quayPackageName + "-opsrc");
+    }
+
+    public void refreshOperators() {
+        openShiftClient.pods().inNamespace("openshift-marketplace")
+                .delete();
     }
 
     private void disableDefaultSources() throws IOException {
@@ -250,6 +256,14 @@ public class OpenShiftService {
         openShiftClient.customResource(subscriptionCrdContext)
                 .createOrReplace(openShiftConfiguration.getNamespace(),
                         new ByteArrayInputStream(subscriptionYaml.getBytes(StandardCharsets.UTF_8)));
+
+        //OpenshiftRole role = openShiftClient.roles().inNamespace(openShiftConfiguration.getNamespace()).withLabel("olm.owner", "fuse-online" +
+                //"-operator.v7.7.0").list().getItems().get(0);
+//        openShiftClient.serviceAccounts().inNamespace(openShiftConfiguration.getNamespace())
+//                .list().getItems().stream().filter(sa -> sa.getMetadata().getName().contains("operator"))
+//                .forEach(sa -> {
+//                    openShiftClient.addRoleToServiceAccount(role.getMetadata().getName(), sa.getMetadata().getName());
+//                });
 
         try {
             waitFor(() ->

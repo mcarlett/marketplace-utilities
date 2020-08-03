@@ -8,47 +8,40 @@
 	<artifactId>marketplace-utilities</artifactId>
 	<version>1.0</version>
 
-	<distributionManagement>
-		<repository>
-			<id>fuse-qe-repo</id>
-			<name>Fuse QE Repository</name>
-			<url>http://nexus.fuse-qe.eng.rdu2.redhat.com/repository/fuse-qe-repo/</url>
-		</repository>
-		<snapshotRepository>
-			<id>fuse-qe-snapshots</id>
-			<name>Fuse QE Snapshots Repository</name>
-			<url>http://nexus.fuse-qe.eng.rdu2.redhat.com/repository/fuse-qe-snapshots/</url>
-		</snapshotRepository>
-	</distributionManagement>
-
 	<dependencies>
 		<dependency>
 			<groupId>ch.qos.logback</groupId>
 			<artifactId>logback-classic</artifactId>
+			<version>1.2.3</version>
 		</dependency>
 		<dependency>
 			<groupId>org.apache.commons</groupId>
 			<artifactId>commons-lang3</artifactId>
+			<version>3.10</version>
 		</dependency>
 
 		<dependency>
 			<groupId>io.fabric8</groupId>
 			<artifactId>openshift-client</artifactId>
+			<version>4.7.1</version>
 		</dependency>
 
 		<dependency>
 			<groupId>org.projectlombok</groupId>
 			<artifactId>lombok</artifactId>
+			<version>1.18.12</version>
 		</dependency>
 
 		<dependency>
 			<groupId>cz.xtf</groupId>
 			<artifactId>core</artifactId>
+			<version>0.16-SNAPSHOT</version>
 		</dependency>
 
 		<dependency>
 			<groupId>org.json</groupId>
 			<artifactId>json</artifactId>
+			<version>20131018</version>
 		</dependency>
 
 		<dependency>
