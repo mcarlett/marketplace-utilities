@@ -57,6 +57,20 @@
 		</dependency>
 	</dependencies>
 
+	<repositories>
+		<repository>
+			<id>bintray-xtf-cz-xtf</id>
+			<name>Bintray XTF</name>
+			<url>https://dl.bintray.com/xtf-cz/xtf</url>
+			<snapshots>
+				<enabled>false</enabled>
+			</snapshots>
+			<releases>
+				<enabled>true</enabled>
+			</releases>
+		</repository>
+	</repositories>
+
 	<build>
 		<plugins>
 			<plugin>
