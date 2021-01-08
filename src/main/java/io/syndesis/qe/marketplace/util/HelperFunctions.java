@@ -1,21 +1,8 @@
 package io.syndesis.qe.marketplace.util;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLParser;
-import cz.xtf.core.openshift.OpenShift;
-import io.fabric8.kubernetes.api.model.LocalObjectReference;
-import io.fabric8.kubernetes.api.model.ServiceAccount;
-import io.fabric8.kubernetes.api.model.ServiceAccountList;
-import io.fabric8.kubernetes.api.model.apiextensions.CustomResourceDefinition;
-import io.fabric8.kubernetes.client.dsl.base.CustomResourceDefinitionContext;
-import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.IOUtils;
 import org.apache.http.HttpEntityEnclosingRequest;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
@@ -25,7 +12,22 @@ import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.HttpClients;
 
-import java.io.*;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
+import com.fasterxml.jackson.dataformat.yaml.YAMLParser;
+
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -38,13 +40,21 @@ import java.util.function.BooleanSupplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import cz.xtf.core.openshift.OpenShift;
+import io.fabric8.kubernetes.api.model.LocalObjectReference;
+import io.fabric8.kubernetes.api.model.ServiceAccount;
+import io.fabric8.kubernetes.api.model.ServiceAccountList;
+import io.fabric8.kubernetes.api.model.apiextensions.CustomResourceDefinition;
+import io.fabric8.kubernetes.client.dsl.base.CustomResourceDefinitionContext;
+import lombok.extern.slf4j.Slf4j;
+
 @Slf4j
 public class HelperFunctions {
     public static String getPackageName(Path targetPath) throws IOException {
         try (Stream<Path> walk = Files.walk(targetPath)) {
             List<String> yamlFiles = walk.map(Path::toString)
-                    .filter(x -> x.endsWith(".package.yaml"))
-                    .collect(Collectors.toList());
+                .filter(x -> x.endsWith(".package.yaml"))
+                .collect(Collectors.toList());
 
             if (yamlFiles.size() > 0) {
                 YAMLParser parser = new YAMLFactory().createParser(new File(yamlFiles.get(0)));
@@ -61,9 +71,9 @@ public class HelperFunctions {
     public static String getOperatorVersion(Path targetPath) throws IOException {
         try (Stream<Path> walk = Files.walk(targetPath)) {
             List<String> directories = walk.filter(Files::isDirectory)
-                    .map(Path::toString)
-                    .sorted(Comparator.comparing(String::toString))
-                    .collect(Collectors.toList());
+                .map(Path::toString)
+                .sorted(Comparator.comparing(String::toString))
+                .collect(Collectors.toList());
 
             if (directories.size() > 0) {
                 String lastDir = directories.get(directories.size() - 1);
@@ -131,7 +141,7 @@ public class HelperFunctions {
         StringBuilder sb = new StringBuilder();
         if (httpResponse != null && httpResponse.getEntity() != null) {
             try (BufferedReader br = new BufferedReader(
-                    new InputStreamReader(httpResponse.getEntity().getContent(), StandardCharsets.UTF_8))) {
+                new InputStreamReader(httpResponse.getEntity().getContent(), StandardCharsets.UTF_8))) {
                 String responseLine;
                 while ((responseLine = br.readLine()) != null) {
                     sb.append(responseLine.trim());
@@ -144,21 +154,20 @@ public class HelperFunctions {
 
     public static void linkPullSecret(OpenShift openshiftClient, String openshiftNamespace, String operatorName, String pullSecret) {
         ServiceAccountList saList = openshiftClient.inNamespace(openshiftNamespace)
-                .serviceAccounts().list();
+            .serviceAccounts().list();
 
         Optional<ServiceAccount> serviceAccount = saList.getItems().stream()
-                .filter(sa -> sa.getMetadata().getName().equals(operatorName))
-                .findFirst();
+            .filter(sa -> sa.getMetadata().getName().equals(operatorName))
+            .findFirst();
 
         if (serviceAccount.isPresent()) {
             ServiceAccount sa = serviceAccount.get();
             sa.getImagePullSecrets().add(new LocalObjectReference(pullSecret));
             openshiftClient.serviceAccounts().inNamespace(openshiftNamespace)
-                    .createOrReplace(sa);
+                .createOrReplace(sa);
         } else {
             log.error("Service account not found in resources");
         }
-
     }
 
     public static String copyManifestFilestFromImage(String image, String targetDirectory) throws IOException {
@@ -167,14 +176,14 @@ public class HelperFunctions {
         }
 
         ProcessBuilder builder = new ProcessBuilder(
-                "docker", "run",
-                "-v", targetDirectory + ":/opt/mount",
-                "--user",
-                "1000:1000",
-                "--rm",
-                "--entrypoint", "cp",
-                image,
-                "-r", "/manifests", "/opt/mount/"
+            "docker", "run",
+            "-v", targetDirectory + ":/opt/mount",
+            "--user",
+            "1000:1000",
+            "--rm",
+            "--entrypoint", "cp",
+            image,
+            "-r", "/manifests", "/opt/mount/"
         );
         builder.redirectErrorStream(false);
         Process p = builder.start();
@@ -201,8 +210,8 @@ public class HelperFunctions {
         JsonNode manifestFile = mapper.readTree(parser);
 
         JsonNode containerObject = manifestFile.get("spec").get("install").get("spec")
-                .get("deployments").get(0).get("spec").get("template").get("spec")
-                .get("containers").get(0);
+            .get("deployments").get(0).get("spec").get("template").get("spec")
+            .get("containers").get(0);
 
         ((ObjectNode) containerObject).put("image", operatorImage);
 
@@ -224,7 +233,7 @@ public class HelperFunctions {
     }
 
     public static boolean waitFor(BooleanSupplier condition, long interval, long timeout)
-            throws InterruptedException, TimeoutException {
+        throws InterruptedException, TimeoutException {
 
         long intervalInMilis = interval * 1000;
         long timeoutInMilis = timeout * 1000;
@@ -244,11 +253,24 @@ public class HelperFunctions {
 
     public static CustomResourceDefinitionContext getContext(CustomResourceDefinition crd) {
         CustomResourceDefinitionContext.Builder builder = new CustomResourceDefinitionContext.Builder()
-                .withGroup(crd.getSpec().getGroup())
-                .withPlural(crd.getSpec().getNames().getPlural())
-                .withScope(crd.getSpec().getScope())
-                .withVersion(crd.getSpec().getVersion());
+            .withGroup(crd.getSpec().getGroup())
+            .withPlural(crd.getSpec().getNames().getPlural())
+            .withScope(crd.getSpec().getScope())
+            .withVersion(crd.getSpec().getVersion());
         return builder.build();
     }
 
+    public static void runCmd(String... command) {
+        try {
+            Process process = new ProcessBuilder(command).start();
+            int ret = 0;
+            ret = process.waitFor();
+            if (ret != 0) {
+                String out = IOUtils.toString(process.getErrorStream(), Charset.defaultCharset());
+                throw new RuntimeException(out);
+            }
+        } catch (InterruptedException | IOException e) {
+            new RuntimeException(e);
+        }
+    }
 }

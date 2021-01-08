@@ -126,7 +126,7 @@ public class QuayService {
         return HelperFunctions.encodeFileToBase64Binary(tarFile);
     }
 
-    private String loginToQuayAndGetToken() throws IOException {
+    public String loginToQuayAndGetToken() throws IOException {
         log.info("Acquiring quay login data");
 
         String quayLoginRequest = HelperFunctions.readResource("quay/quay-login.json")
@@ -153,7 +153,7 @@ public class QuayService {
         );
     }
 
-    private void changeProjectVisibilityToPublic(String packageName) throws IOException {
+    public void changeProjectVisibilityToPublic(String packageName) throws IOException {
         log.info("Changing quay application visibility to 'public'");
 
         String pushBody = "{\"visibility\":\"public\"}";

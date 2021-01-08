@@ -14,5 +14,5 @@ public class OpenShiftConfiguration {
     private String pullSecret;
     private String quayOpsrcToken;
     private String installedCSV;
-
+    private String icspConfigURL;
 }
