@@ -18,7 +18,7 @@ public class Opm {
     private File binary;
     private static final String OPM_IMAGE = "registry.redhat.io/openshift4/ose-operator-registry:";
     private static final String version = "v4.5";
-    
+
     public Opm() {
         try {
             Process which = new ProcessBuilder("which", "opm").start();

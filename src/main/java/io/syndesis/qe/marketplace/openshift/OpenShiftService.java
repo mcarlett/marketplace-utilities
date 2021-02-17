@@ -36,6 +36,7 @@ public class OpenShiftService {
     private final OpenShift openShiftClient;
 
     private final OpenShiftConfiguration openShiftConfiguration;
+    private final OpenShiftUser adminUser;
 
     private OpenShift openShiftClientAsRegularUser;
 
@@ -56,6 +57,7 @@ public class OpenShiftService {
             adminOpenShiftUser.getUserName(),
             adminOpenShiftUser.getPassword()
         );
+        this.adminUser = adminOpenShiftUser;
 
         if (regularOpenShiftUser != null) {
             openShiftClientAsRegularUser = OpenShift.get(
@@ -142,6 +144,7 @@ public class OpenShiftService {
             File script = new File("/tmp/brew-registry-script.sh");
             FileUtils.copyURLToFile(new URL(openShiftConfiguration.getIcspConfigURL()), script);
             script.setExecutable(true);
+            runCmd("oc", "login", "-u", adminUser.getUserName(), "-p", adminUser.getPassword(), adminUser.getApiUrl());
             runCmd(script.getAbsolutePath());
         }
     }
@@ -314,14 +317,6 @@ public class OpenShiftService {
         openShiftClient.customResource(subscriptionCrdContext)
             .createOrReplace(openShiftConfiguration.getNamespace(),
                 new ByteArrayInputStream(subscriptionYaml.getBytes(StandardCharsets.UTF_8)));
-
-        //OpenshiftRole role = openShiftClient.roles().inNamespace(openShiftConfiguration.getNamespace()).withLabel("olm.owner", "fuse-online" +
-        //"-operator.v7.7.0").list().getItems().get(0);
-        //        openShiftClient.serviceAccounts().inNamespace(openShiftConfiguration.getNamespace())
-        //                .list().getItems().stream().filter(sa -> sa.getMetadata().getName().contains("operator"))
-        //                .forEach(sa -> {
-        //                    openShiftClient.addRoleToServiceAccount(role.getMetadata().getName(), sa.getMetadata().getName());
-        //                });
 
         try {
             waitFor(() ->
