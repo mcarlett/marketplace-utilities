@@ -31,6 +31,7 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -266,8 +267,10 @@ public class HelperFunctions {
             int ret = 0;
             ret = process.waitFor();
             if (ret != 0) {
-                String out = IOUtils.toString(process.getErrorStream(), Charset.defaultCharset());
-                throw new RuntimeException(out);
+                String out = IOUtils.toString(process.getErrorStream(), Charset.defaultCharset()) + "\n" +
+                    IOUtils.toString(process.getInputStream(), Charset.defaultCharset());
+                throw new RuntimeException(
+                    String.format("Command finished with non-zero value!, Command: '%s', Output: '%s'", Arrays.toString(command), out));
             }
         } catch (InterruptedException | IOException e) {
             new RuntimeException(e);
