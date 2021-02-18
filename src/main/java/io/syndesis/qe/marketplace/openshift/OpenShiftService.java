@@ -357,4 +357,8 @@ public class OpenShiftService {
     public OpenShift getClient() {
         return openShiftClient;
     }
+
+    public OpenShiftUser getAdminUser() {
+        return adminUser;
+    }
 }

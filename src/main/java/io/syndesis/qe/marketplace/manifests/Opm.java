@@ -1,14 +1,20 @@
 package io.syndesis.qe.marketplace.manifests;
 
+import io.syndesis.qe.marketplace.openshift.OpenShiftService;
+import io.syndesis.qe.marketplace.openshift.OpenShiftUser;
 import io.syndesis.qe.marketplace.quay.QuayUser;
 import io.syndesis.qe.marketplace.util.HelperFunctions;
 
 import org.apache.commons.io.IOUtils;
+import org.json.JSONObject;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.Charset;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
+import io.fabric8.kubernetes.client.dsl.base.CustomResourceDefinitionContext;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 
@@ -17,15 +23,16 @@ public class Opm {
 
     private File binary;
     private static final String OPM_IMAGE = "registry.redhat.io/openshift4/ose-operator-registry:";
-    private static final String version = "v4.5";
+    private final OpenShiftService ocpSvc;
 
-    public Opm() {
+    public Opm(OpenShiftService ocpSvc) {
+        this.ocpSvc = ocpSvc;
         try {
             Process which = new ProcessBuilder("which", "opm").start();
             int result = which.waitFor();
             String path = IOUtils.toString(which.getInputStream(), Charset.defaultCharset()).trim();
             if (result != 0) {
-                fetchOpm(version);
+                fetchOpm();
             } else {
                 binary = new File(path);
             }
@@ -34,23 +41,29 @@ public class Opm {
         }
     }
 
-    private Opm(String version) {
-        fetchOpm(version);
+    //Get version of the OCP server to a suitable image tag (4.16.7 -> v4.16)
+    private String getTag() {
+        CustomResourceDefinitionContext crdContext = new CustomResourceDefinitionContext.Builder()
+            .withGroup("config.openshift.io")
+            .withVersion("v1")
+            .withPlural("clusteroperators")
+            .withScope("Cluster")
+            .build();
+        JSONObject apiServer = new JSONObject(ocpSvc.getClient().customResource(crdContext).get("openshift-apiserver"));
+        String fullVersion = apiServer.getJSONObject("status").getJSONArray("versions").getJSONObject(0).getString("version");
+        return "v" + fullVersion.substring(0, fullVersion.lastIndexOf("."));
     }
 
-    private void fetchOpm(String version) {
+    private void fetchOpm() {
         try {
-            binary = File.createTempFile("opm", version);
-            Process p = new ProcessBuilder("docker", "run", "--rm", "--entrypoint=/usr/bin/cat", OPM_IMAGE + version, "/usr/bin/opm")
-                .redirectOutput(binary)
-                .start();
-            p.waitFor();
-            if (p.exitValue() != 0) {
-                throw new RuntimeException(IOUtils.toString(p.getErrorStream(), Charset.defaultCharset()));
-            }
+            Path binaryPath = Files.createTempDirectory("opm");
+            OpenShiftUser user = ocpSvc.getAdminUser();
+            HelperFunctions.runCmd("oc", "login", "-u", user.getUserName(), "-p", user.getPassword(), user.getApiUrl());
+            HelperFunctions.runCmd("oc", "image", "extract", OPM_IMAGE + getTag(), "--path", "/usr/bin/registry/opm:" + binaryPath.toAbsolutePath());
+            binary = binaryPath.resolve("opm").toFile();
             binary.setExecutable(true);
             binary.deleteOnExit();
-        } catch (IOException | InterruptedException e) {
+        } catch (IOException e) {
             throw new RuntimeException(e);
         }
     }
