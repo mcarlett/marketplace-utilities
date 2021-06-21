@@ -8,6 +8,13 @@ import io.syndesis.qe.marketplace.util.HelperFunctions;
 
 import org.apache.commons.codec.binary.StringUtils;
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.IOUtils;
+import org.apache.http.impl.client.HttpClients;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import com.jayway.jsonpath.DocumentContext;
+import com.jayway.jsonpath.JsonPath;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
@@ -19,6 +26,7 @@ import java.util.Map;
 import java.util.concurrent.TimeoutException;
 
 import cz.xtf.core.openshift.OpenShift;
+import cz.xtf.core.openshift.OpenShifts;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretList;
 import io.fabric8.kubernetes.api.model.apps.DeploymentList;
@@ -135,17 +143,64 @@ public class OpenShiftService {
             .build();
 
         try {
-            openShiftClient.customResource(operatorSourceCrdContext).get("brew-registry");
+            openShiftClient.customResource(operatorSourceCrdContext).get("brew-registry-operatorhub");
         } catch (KubernetesClientException e) {
             log.info("ICSP was not found, creating new!");
             if (openShiftConfiguration.getIcspConfigURL() == null) {
                 throw new RuntimeException("ICSP is configured by a script. Set this script URL in OpenshiftConfiguration please.");
             }
             File script = new File("/tmp/brew-registry-script.sh");
-            FileUtils.copyURLToFile(new URL(openShiftConfiguration.getIcspConfigURL()), script);
-            script.setExecutable(true);
-            runCmd("oc", "login", "-u", adminUser.getUserName(), "-p", adminUser.getPassword(), adminUser.getApiUrl());
-            runCmd(script.getAbsolutePath());
+            try {
+                final String scriptSource = IOUtils.toString(new URL(openShiftConfiguration.getIcspConfigURL()), StandardCharsets.UTF_8);
+                final String scriptPatched = scriptSource.replaceAll("oc ", OpenShifts.getBinaryPath() + " ");
+                FileUtils.write(script, scriptPatched, StandardCharsets.UTF_8);
+                script.setExecutable(true);
+                runCmd(OpenShifts.getBinaryPath(), "login", "-u", adminUser.getUserName(), "-p", adminUser.getPassword(), adminUser.getApiUrl());
+                runCmd(script.getAbsolutePath());
+            } catch (Exception ex) {
+                log.error("Something went wrong while setting up ICSP, would you mind setting it manually?", e);
+                log.info("Run: curl {} | bash", openShiftConfiguration.getIcspConfigURL());
+                throw new RuntimeException(ex);
+            }
+            CustomResourceDefinitionContext mcpContext = new CustomResourceDefinitionContext.Builder()
+                .withVersion("v1")
+                .withGroup("machineconfiguration.openshift.io")
+                .withScope("Cluster")
+                .withPlural("machineconfigpools")
+                .build();
+
+            log.info("Waiting for OCP to pick up the ICSP config, this might take a while...");
+            waitFor(() -> {
+                JSONObject mcpList = new JSONObject(openShiftClient.customResource(mcpContext).list());
+                final JSONArray mcps = mcpList.getJSONArray("items");
+                boolean updating = false;
+                for (int i = 0; i < mcps.length(); i++) {
+                    final DocumentContext documentContext = JsonPath.parse(mcps.getJSONObject(i).toString());
+                    boolean status =
+                        documentContext.read(".status.conditions[?(@.type==\"Updating\")].status").toString().toLowerCase().contains("true");
+                    updating |= status;
+                }
+                return updating;
+            }, 10, 120 * 1000);
+
+            log.info("Nodes started upgrading, this will also take a while...");
+            waitFor(() -> {
+                try {
+                    JSONObject mcpList = new JSONObject(openShiftClient.customResource(mcpContext).list());
+                    final JSONArray mcps = mcpList.getJSONArray("items");
+                    boolean updated = false;
+                    for (int i = 0; i < mcps.length(); i++) {
+                        final DocumentContext documentContext = JsonPath.parse(mcps.getJSONObject(i).toString());
+                        boolean status =
+                            documentContext.read(".status.conditions[?(@.type==\"Updated\")].status").toString().toLowerCase().contains("true");
+                        updated |= status;
+                    }
+                    return updated;
+                } catch (Exception ex) {
+                    log.error("Got exception in the wait: ", ex);
+                    return false;
+                }
+            }, 10, 600 * 1000);
         }
     }
 

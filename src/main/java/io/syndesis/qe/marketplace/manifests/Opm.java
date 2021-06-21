@@ -3,17 +3,22 @@ package io.syndesis.qe.marketplace.manifests;
 import io.syndesis.qe.marketplace.openshift.OpenShiftService;
 import io.syndesis.qe.marketplace.openshift.OpenShiftUser;
 import io.syndesis.qe.marketplace.quay.QuayUser;
+import io.syndesis.qe.marketplace.tar.Compress;
 import io.syndesis.qe.marketplace.util.HelperFunctions;
 
+import org.apache.commons.compress.archivers.tar.TarUtils;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
 import org.json.JSONObject;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URL;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import cz.xtf.core.openshift.OpenShifts;
 import io.fabric8.kubernetes.client.dsl.base.CustomResourceDefinitionContext;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +28,7 @@ public class Opm {
 
     private File binary;
     private static final String OPM_IMAGE = "registry.redhat.io/openshift4/ose-operator-registry:";
+    private static final String OPM_BINARY_URL = "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/opm-linux.tar.gz";
     private final OpenShiftService ocpSvc;
 
     public Opm(OpenShiftService ocpSvc) {
@@ -58,8 +64,15 @@ public class Opm {
         try {
             Path binaryPath = Files.createTempDirectory("opm");
             OpenShiftUser user = ocpSvc.getAdminUser();
-            HelperFunctions.runCmd("oc", "login", "-u", user.getUserName(), "-p", user.getPassword(), user.getApiUrl());
-            HelperFunctions.runCmd("oc", "image", "extract", OPM_IMAGE + getTag(), "--path", "/usr/bin/registry/opm:" + binaryPath.toAbsolutePath());
+            HelperFunctions.runCmd(OpenShifts.getBinaryPath(), "login", "--insecure-skip-tls-verify", "-u", user.getUserName(), "-p", user.getPassword(), user.getApiUrl());
+            try {
+                HelperFunctions
+                    .runCmd(OpenShifts.getBinaryPath(), "image", "extract", OPM_IMAGE + getTag(), "--path", "/usr/bin/registry/opm:" + binaryPath.toAbsolutePath());
+            } catch (RuntimeException ignored) {
+                final Path opmArchiveFile = Files.createTempFile("opm-binary", ".tar.gz");
+                FileUtils.copyURLToFile(new URL(OPM_BINARY_URL), opmArchiveFile.toFile());
+                HelperFunctions.runCmd("tar", "xzf", opmArchiveFile.toAbsolutePath().toString(), "-C", binaryPath.toAbsolutePath().toString());
+            }
             binary = binaryPath.resolve("opm").toFile();
             binary.setExecutable(true);
             binary.deleteOnExit();
@@ -76,13 +89,13 @@ public class Opm {
         HelperFunctions.runCmd(command);
     }
 
-    public Index createIndex(String name) {
-        return new Index(name, this);
+    public Index createIndex(String name, QuayUser quayUser) {
+        return new Index(name, this, quayUser);
     }
 
     public Index pullIndex(String name, QuayUser user) {
-        Index index = new Index(name, this);
-        index.pull(user);
+        Index index = new Index(name, this, user);
+        index.pull();
         return index;
     }
 }

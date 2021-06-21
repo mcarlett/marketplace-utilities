@@ -34,17 +34,18 @@ public class Index {
     private String ocpName;
     private List<Bundle> bundles;
     private Opm opm;
-    private boolean isPushed;
-    private static final String BUILD_TOOL = "docker";
+    private static final String BUILD_TOOL = System.getProperty("marketplace.build.tool", "docker");
     static final String MARKETPLACE_NAMESPACE = "openshift-marketplace";
     private static QuayService quaySvc;
     private static File configFile;
 
-    Index(String name, Opm opm) {
+    private QuayUser quayUser;
+
+    Index(String name, Opm opm, QuayUser quayUser) {
         this.name = name;
         bundles = new ArrayList<>();
-        isPushed = false;
         this.opm = opm;
+        this.quayUser = quayUser;
     }
 
     void createConfig(QuayUser user) {
@@ -62,15 +63,19 @@ public class Index {
         }
     }
 
-    void pull(QuayUser user) {
+    void pull() {
         HelperFunctions.runCmd(BUILD_TOOL, "pull", this.name);
     }
 
     public Bundle addBundle(String bundleName) {
-        opm.runOpmCmd("index", "add", "--bundles=" + bundleName, "--tag=" + this.name, "--build-tool=" + BUILD_TOOL);
-        isPushed = false;
+        if (bundles.isEmpty()) {
+            opm.runOpmCmd("index", "add", "--bundles=" + bundleName, "--tag=" + this.name, "--build-tool=" + BUILD_TOOL);
+        } else {
+            opm.runOpmCmd("index", "add", "--bundles=" + bundleName, "--tag=" + this.name, "--build-tool=" + BUILD_TOOL, "--from-index=" + name);
+        }
         Bundle bundle = new Bundle(bundleName, this);
         bundles.add(bundle);
+        push();
         return bundle;
     }
 
@@ -81,15 +86,18 @@ public class Index {
     }
 
     @SneakyThrows
-    public void push(QuayUser user) {
+    private void push() {
         if (quaySvc == null) {
-            quaySvc = new QuayService(user, null, null);
+            quaySvc = new QuayService(quayUser, null, null);
         }
         if (configFile == null || !configFile.exists()) {
-            createConfig(user);
+            createConfig(quayUser);
         }
-        HelperFunctions.runCmd(BUILD_TOOL, "--config", configFile.getParent(), "push", name);
-        isPushed = true;
+        if (BUILD_TOOL.equalsIgnoreCase("docker")) {
+            HelperFunctions.runCmd(BUILD_TOOL, "--config", configFile.getParent(), "push", name);
+        } else {
+            HelperFunctions.runCmd(BUILD_TOOL, "--authfile", configFile.getParent(), "push", name);
+        }
     }
 
     private static CustomResourceDefinitionContext catalogSourceIndex() {
@@ -103,9 +111,6 @@ public class Index {
     }
 
     public void addIndexToCluster(OpenShiftService service, String catalogName) throws IOException, TimeoutException, InterruptedException {
-        if (!isPushed) {
-            throw new IllegalStateException("You forgot to push the index image to quay");
-        }
         OpenShiftClient ocp = service.getClient();
 
         String catalogSource = null;

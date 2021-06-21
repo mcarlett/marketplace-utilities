@@ -1,6 +1,9 @@
 package io.syndesis.qe.marketplace.manifests;
 
 import static io.syndesis.qe.marketplace.util.HelperFunctions.readResource;
+import static io.syndesis.qe.marketplace.util.HelperFunctions.waitFor;
+
+import static com.jayway.jsonpath.Criteria.where;
 
 import io.syndesis.qe.marketplace.openshift.OpenShiftService;
 import io.syndesis.qe.marketplace.util.HelperFunctions;
@@ -8,7 +11,14 @@ import io.syndesis.qe.marketplace.util.HelperFunctions;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
 import org.apache.commons.io.IOUtils;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.yaml.snakeyaml.Yaml;
+
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.jayway.jsonpath.DocumentContext;
+import com.jayway.jsonpath.Filter;
+import com.jayway.jsonpath.JsonPath;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -38,10 +48,13 @@ public class Bundle {
     @Getter
     private Map<String, String> annotations;
     @Getter
-    private String csv;
+    private JSONObject csv;
+
     @Getter
     private List<String> crds;
     private Index index;
+
+    private String subscriptionName;
 
     Bundle(String imageName, Index index) {
         this.imageName = imageName;
@@ -58,6 +71,15 @@ public class Bundle {
             .build();
     }
 
+    private static CustomResourceDefinitionContext installPlanContext() {
+        return new CustomResourceDefinitionContext.Builder()
+            .withGroup("operators.coreos.com")
+            .withPlural("installplans")
+            .withScope("Namespaced")
+            .withVersion("v1alpha1")
+            .build();
+    }
+
     private static void unTar(TarArchiveInputStream tis, File destFolder) throws IOException {
         TarArchiveEntry tarEntry = null;
         while ((tarEntry = tis.getNextTarEntry()) != null) {
@@ -67,7 +89,7 @@ public class Bundle {
                 File result = new File(destFolder, tarEntry.getName());
                 FileOutputStream fos = new FileOutputStream(result);
                 IOUtils.copy(tis, fos);
-                if (result.getName().equals("layer.tar")) {
+                if (result.getName().endsWith(".tar")) {
                     unTar(new TarArchiveInputStream(new FileInputStream(result)), destFolder);
                 }
                 fos.close();
@@ -87,7 +109,9 @@ public class Bundle {
             .filter(s -> s.contains("clusterserviceversion.yaml"))
             .findFirst();
         if (csvPath.isPresent()) {
-            csv = readFile(Paths.get(manifestFolder.getAbsolutePath(), csvPath.get()).toString());
+            String csvSource = readFile(Paths.get(manifestFolder.getAbsolutePath(), csvPath.get()).toString());
+
+            csv = new JSONObject((Map<String, Object>)new Yaml().load(csvSource));
         } else {
             throw new IllegalStateException(
                 "A csv entry is missing from the bundle " + imageName + " take a look at folder " + manifestFolder.getParentFile().toString());
@@ -150,6 +174,8 @@ public class Bundle {
             .replaceAll("NAME", name)
             .replaceAll("SOURCE", index.getOcpName());
 
+        subscriptionName = name;
+
         if (ocp.getProject(namespace) == null) {
             ocp.createProjectRequest(namespace);
         }
@@ -169,6 +195,63 @@ public class Bundle {
             .replaceAll("SOURCE", source);
 
         ocp.customResource(subscriptionContext()).createOrReplace(namespace, subscription);
+    }
+
+    @SneakyThrows
+    public void update(OpenShiftService service, Bundle newBundle) {
+        OpenShift ocp = service.getClient();
+        String namespace = service.getClient().getNamespace();
+
+        JSONObject subscription = new JSONObject(ocp.customResource(subscriptionContext()).get(namespace, subscriptionName));
+        subscription.getJSONObject("spec").put("channel", newBundle.getDefaultChannel());
+        waitFor(() -> {
+            try {
+                ocp.customResource(subscriptionContext()).edit(namespace, subscriptionName, subscription.toString());
+                return true;
+            } catch (Exception e){
+                return false;
+            }
+        }, 5000, 1000);
+    }
+
+    @SneakyThrows
+    public void update(OpenShiftService service, Bundle newBundle, boolean wait) {
+        update(service, newBundle);
+
+        if (wait){
+            waitForUpdate(service, newBundle);
+        }
+    }
+
+    @SneakyThrows
+    public void waitForUpdate(OpenShiftService service, Bundle newBundle) {
+        OpenShift ocp = service.getClient();
+
+
+        final String previousCSV = getCSVName();
+        final String newCSV = newBundle.getCSVName();
+
+        Filter completeFilter = Filter.filter(
+            where("phase").is("Complete")
+        );
+
+        Filter matchesCSVs = Filter.filter(
+            where("bundleLookups.identifier").eq(newCSV).and("bundleLookups.replaces").eq(previousCSV)
+        );
+
+        waitFor(() -> {
+            final DocumentContext documentContext = JsonPath.parse(ocp.customResource(installPlanContext()).list(ocp.getNamespace()));
+
+            //Find all Complete installplans
+            final Object read = documentContext
+                .read("$.items[*].status[?]", completeFilter);
+
+            //From the complete installplans find one that matches the CSVs
+            final Object found = JsonPath.parse(read).read("$", matchesCSVs);
+
+            return found != null;
+        }, 2, 120 * 100);
+
     }
 
     public String getDefaultChannel() {
@@ -197,6 +280,6 @@ public class Bundle {
     }
 
     public String getCSVName() {
-        return ((String) new Yaml().<Map<String, Map<String, Object>>>load(getCsv()).get("metadata").get("name"));
+        return csv.getJSONObject("metadata").getString("name");
     }
 }

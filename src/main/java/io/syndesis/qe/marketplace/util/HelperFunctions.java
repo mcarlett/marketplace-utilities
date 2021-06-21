@@ -264,16 +264,20 @@ public class HelperFunctions {
     public static void runCmd(String... command) {
         try {
             Process process = new ProcessBuilder(command).start();
+            log.info("Running command {}", Arrays.asList(command));
+
             int ret = 0;
             ret = process.waitFor();
+            log.info("Command finished with return code {}", ret);
+            String out = IOUtils.toString(process.getErrorStream(), Charset.defaultCharset()) + "\n" +
+                IOUtils.toString(process.getInputStream(), Charset.defaultCharset());
+            log.debug(out);
             if (ret != 0) {
-                String out = IOUtils.toString(process.getErrorStream(), Charset.defaultCharset()) + "\n" +
-                    IOUtils.toString(process.getInputStream(), Charset.defaultCharset());
                 throw new RuntimeException(
                     String.format("Command finished with non-zero value!, Command: '%s', Output: '%s'", Arrays.toString(command), out));
             }
         } catch (InterruptedException | IOException e) {
-            new RuntimeException(e);
+            throw new RuntimeException(e);
         }
     }
 }
