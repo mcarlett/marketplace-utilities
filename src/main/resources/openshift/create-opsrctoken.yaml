@@ -1,8 +1,0 @@
-apiVersion: v1
-data:
-  token: YmFzaWMgY21oZmFXNTBaV2R5WVhScGIyNWZiM0JsY21GMGIzSnpLMloxYzJVNk1EaEpSRVZWUTBVM05UbEVXVEpCUlRjeVNWSTJRMWhGTWtWR056RllORGRMTkVReVdGbFZWVVZOTWt4SFIwUTNXamhWVDBsUU5GQmFNbEZQV2xVeFdRPT0=
-kind: Secret
-metadata:
-  name: PACKAGE_NAME-opsrctoken
-  namespace: openshift-marketplace
-type: Opaque

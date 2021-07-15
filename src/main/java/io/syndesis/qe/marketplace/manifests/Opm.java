@@ -3,10 +3,8 @@ package io.syndesis.qe.marketplace.manifests;
 import io.syndesis.qe.marketplace.openshift.OpenShiftService;
 import io.syndesis.qe.marketplace.openshift.OpenShiftUser;
 import io.syndesis.qe.marketplace.quay.QuayUser;
-import io.syndesis.qe.marketplace.tar.Compress;
 import io.syndesis.qe.marketplace.util.HelperFunctions;
 
-import org.apache.commons.compress.archivers.tar.TarUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
 import org.json.JSONObject;
@@ -62,7 +60,16 @@ public class Opm {
 
     private void fetchOpm() {
         try {
-            Path binaryPath = Files.createTempDirectory("opm");
+            final File binaryFolder = new File("/tmp/marketplace-utilities-opm/");
+            if (binaryFolder.exists()) {
+                if (new File(binaryFolder, "opm").exists()) {
+                    binary = new File(binaryFolder, "opm");
+                    return;
+                }
+            } else {
+                Files.createDirectory(binaryFolder.toPath());
+            }
+            Path binaryPath = binaryFolder.toPath();
             OpenShiftUser user = ocpSvc.getAdminUser();
             HelperFunctions.runCmd(OpenShifts.getBinaryPath(), "login", "--insecure-skip-tls-verify", "-u", user.getUserName(), "-p", user.getPassword(), user.getApiUrl());
             try {
@@ -75,7 +82,6 @@ public class Opm {
             }
             binary = binaryPath.resolve("opm").toFile();
             binary.setExecutable(true);
-            binary.deleteOnExit();
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -90,11 +96,11 @@ public class Opm {
     }
 
     public Index createIndex(String name, QuayUser quayUser) {
-        return new Index(name, this, quayUser);
+        return new Index(name, ocpSvc, this, quayUser);
     }
 
     public Index pullIndex(String name, QuayUser user) {
-        Index index = new Index(name, this, user);
+        Index index = new Index(name, ocpSvc, this, user);
         index.pull();
         return index;
     }

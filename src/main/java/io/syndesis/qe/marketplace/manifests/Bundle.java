@@ -1,6 +1,8 @@
 package io.syndesis.qe.marketplace.manifests;
 
+import static io.syndesis.qe.marketplace.manifests.Index.BUILD_TOOL;
 import static io.syndesis.qe.marketplace.util.HelperFunctions.readResource;
+import static io.syndesis.qe.marketplace.util.HelperFunctions.runCmd;
 import static io.syndesis.qe.marketplace.util.HelperFunctions.waitFor;
 
 import static com.jayway.jsonpath.Criteria.where;
@@ -11,11 +13,21 @@ import io.syndesis.qe.marketplace.util.HelperFunctions;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
 import org.apache.commons.io.IOUtils;
+import org.assertj.core.api.Assertions;
+import org.assertj.core.api.SoftAssertions;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.yaml.snakeyaml.Yaml;
 
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.github.dockerjava.api.DockerClient;
+import com.github.dockerjava.api.async.ResultCallback;
+import com.github.dockerjava.api.model.PullResponseItem;
+import com.github.dockerjava.core.DefaultDockerClientConfig;
+import com.github.dockerjava.core.DockerClientConfig;
+import com.github.dockerjava.core.DockerClientImpl;
+import com.github.dockerjava.okhttp.OkDockerHttpClient;
+import com.github.dockerjava.transport.DockerHttpClient;
 import com.jayway.jsonpath.DocumentContext;
 import com.jayway.jsonpath.Filter;
 import com.jayway.jsonpath.JsonPath;
@@ -24,13 +36,17 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -56,9 +72,12 @@ public class Bundle {
 
     private String subscriptionName;
 
-    Bundle(String imageName, Index index) {
+    private final OpenShiftService ocpService;
+
+    Bundle(String imageName, Index index, OpenShiftService ocpService) {
         this.imageName = imageName;
         this.index = index;
+        this.ocpService = ocpService;
         readMetadata();
     }
 
@@ -111,7 +130,7 @@ public class Bundle {
         if (csvPath.isPresent()) {
             String csvSource = readFile(Paths.get(manifestFolder.getAbsolutePath(), csvPath.get()).toString());
 
-            csv = new JSONObject((Map<String, Object>)new Yaml().load(csvSource));
+            csv = new JSONObject((Map<String, Object>) new Yaml().load(csvSource));
         } else {
             throw new IllegalStateException(
                 "A csv entry is missing from the bundle " + imageName + " take a look at folder " + manifestFolder.getParentFile().toString());
@@ -142,13 +161,13 @@ public class Bundle {
         consumeManifestFolder(manifestFolder);
     }
 
-    public void createSubscription(OpenShiftService service) throws IOException {
-        createSubscription(service, getPackageName(), getDefaultChannel(), getCSVName());
+    public void createSubscription() throws IOException {
+        createSubscription(getPackageName(), getDefaultChannel(), getCSVName());
     }
 
-    private void createOperatorGroup(OpenShiftService service) throws IOException {
-        OpenShift ocp = service.getClient();
-        String namespace = service.getClient().getNamespace();
+    private void createOperatorGroup() throws IOException {
+        OpenShift ocp = ocpService.getClient();
+        String namespace = ocpService.getClient().getNamespace();
 
         CustomResourceDefinitionContext operatorGroupCrdContext = new CustomResourceDefinitionContext.Builder()
             .withGroup("operators.coreos.com")
@@ -163,10 +182,10 @@ public class Bundle {
         ocp.customResource(operatorGroupCrdContext).createOrReplace(namespace, operatorGroupYaml);
     }
 
-    public void createSubscription(OpenShiftService service, String name, String channel, String startingCSV) throws IOException {
-        service.setupImageContentSourcePolicy();
-        OpenShift ocp = service.getClient();
-        String namespace = service.getClient().getNamespace();
+    public void createSubscription(String name, String channel, String startingCSV) throws IOException {
+        ocpService.setupImageContentSourcePolicy();
+        OpenShift ocp = ocpService.getClient();
+        String namespace = ocpService.getClient().getNamespace();
         String subscription = HelperFunctions.readResource("openshift/create-subscriptionindex.yaml");
         subscription = subscription.replaceAll("NAMESPACE", namespace)
             .replaceAll("CHANNEL", channel)
@@ -179,10 +198,18 @@ public class Bundle {
         if (ocp.getProject(namespace) == null) {
             ocp.createProjectRequest(namespace);
         }
-        createOperatorGroup(service);
+        createOperatorGroup();
         ocp.customResource(subscriptionContext()).createOrReplace(namespace, subscription);
     }
 
+    /**
+     * Create a generic subscription CR
+     * @param service openshift service
+     * @param name name of the subscription
+     * @param channel channel to subscribe to
+     * @param startingCSV starting CSV version
+     * @param source the catalog source
+     */
     @SneakyThrows
     public static void createSubscription(OpenShiftService service, String name, String channel, String startingCSV, String source) {
         OpenShift ocp = service.getClient();
@@ -197,10 +224,16 @@ public class Bundle {
         ocp.customResource(subscriptionContext()).createOrReplace(namespace, subscription);
     }
 
+    /**
+     * Start updating the bundle to newer version
+     * @param newBundle newer version of the bundle
+     * @see Bundle#update(Bundle, boolean) for waiting for upgrade
+     * @see Bundle#waitForUpdate(Bundle) for waiting for upgrade
+     */
     @SneakyThrows
-    public void update(OpenShiftService service, Bundle newBundle) {
-        OpenShift ocp = service.getClient();
-        String namespace = service.getClient().getNamespace();
+    public void update(Bundle newBundle) {
+        OpenShift ocp = ocpService.getClient();
+        String namespace = ocpService.getClient().getNamespace();
 
         JSONObject subscription = new JSONObject(ocp.customResource(subscriptionContext()).get(namespace, subscriptionName));
         subscription.getJSONObject("spec").put("channel", newBundle.getDefaultChannel());
@@ -208,25 +241,33 @@ public class Bundle {
             try {
                 ocp.customResource(subscriptionContext()).edit(namespace, subscriptionName, subscription.toString());
                 return true;
-            } catch (Exception e){
+            } catch (Exception e) {
                 return false;
             }
         }, 5000, 1000);
     }
 
+    /**
+     * Updated the currently installed bundle to a newer version.
+     * @param newBundle newer version of the bundle
+     * @param wait should the call wait for the update to finish?
+     */
     @SneakyThrows
-    public void update(OpenShiftService service, Bundle newBundle, boolean wait) {
-        update(service, newBundle);
+    public void update(Bundle newBundle, boolean wait) {
+        update(newBundle);
 
-        if (wait){
-            waitForUpdate(service, newBundle);
+        if (wait) {
+            waitForUpdate(newBundle);
         }
     }
 
+    /**
+     * Wait for the bundle to be updated to the new version.
+     * @param newBundle new version of the bundle
+     */
     @SneakyThrows
-    public void waitForUpdate(OpenShiftService service, Bundle newBundle) {
-        OpenShift ocp = service.getClient();
-
+    public void waitForUpdate(Bundle newBundle) {
+        OpenShift ocp = ocpService.getClient();
 
         final String previousCSV = getCSVName();
         final String newCSV = newBundle.getCSVName();
@@ -251,12 +292,80 @@ public class Bundle {
 
             return found != null;
         }, 2, 120 * 100);
-
     }
 
     public String getDefaultChannel() {
         String val = annotations.get("operators.operatorframework.io.bundle.channel.default.v1");
         return val == null ? getChannels()[0] : val;
+    }
+
+    /**
+     * Assert images have the same id, see spec.relatedImages of CSV for proper names.
+     *
+     * @param images map of names and images to be checked against
+     */
+    public void assertSameImages(Map<String, String> images) {
+        final JSONArray relatedImagesArray = getCsv().getJSONObject("spec").getJSONArray("relatedImages");
+        Map<String, String> relatedImages = new HashMap<>();
+        for (int i = 0; i < relatedImagesArray.length(); i++) {
+            final JSONObject image = relatedImagesArray.getJSONObject(i);
+            relatedImages.put(image.getString("name"), image.getString("image"));
+        }
+
+        SoftAssertions sa = new SoftAssertions();
+
+
+        DockerClientConfig standard = DefaultDockerClientConfig
+            .createDefaultConfigBuilder()
+            .build();
+
+        DockerHttpClient httpClient = new OkDockerHttpClient.Builder()
+            .dockerHost(standard.getDockerHost())
+            .sslConfig(standard.getSSLConfig())
+            .connectTimeout(30)
+            .readTimeout(45)
+            .build();
+
+        DockerClient dockerClient = DockerClientImpl.getInstance(standard, httpClient);
+
+        Assertions.assertThatCode(() -> dockerClient.pingCmd().exec()).describedAs("Cannot connect to docker to check images IDs")
+            .doesNotThrowAnyException();
+
+        images.forEach((name, image1) -> {
+            String image2 = relatedImages.get(name);
+
+            if (image2 == null) {
+                sa.fail("Image " + name + " was not found in the CSV, known names are: " + relatedImages.keySet());
+                return;
+            }
+
+            if (ocpService.getOpenShiftConfiguration().getDockerRegistry() != null) {
+                image2 = image2.replaceFirst("[^/]+/", ocpService.getOpenShiftConfiguration().getDockerRegistry() + "/");
+            }
+
+            try {
+                final String dockerCfg = System.getProperty("DOCKER_CONFIG");
+                if (dockerCfg != null) {
+                    if (BUILD_TOOL.equalsIgnoreCase("docker")) {
+                        HelperFunctions.runCmd(BUILD_TOOL, "--config", dockerCfg, "pull", image1);
+                        HelperFunctions.runCmd(BUILD_TOOL, "--config", dockerCfg, "pull", image2);
+                    } else {
+                        HelperFunctions.runCmd(BUILD_TOOL, "--authfile", dockerCfg, "pull", image1);
+                        HelperFunctions.runCmd(BUILD_TOOL, "--authfile", dockerCfg, "pull", image2);
+                    }
+                } else {
+                    HelperFunctions.runCmd(BUILD_TOOL, "pull", image1);
+                    HelperFunctions.runCmd(BUILD_TOOL, "pull", image2);
+                }
+            } catch (Exception e) {
+                sa.fail("Couldn't pull image", e);
+                return;
+            }
+
+            sa.assertThat(dockerClient.inspectImageCmd(image1).exec().getId()).isEqualTo(dockerClient.inspectImageCmd(image2).exec().getId())
+                .as("Expected image with name '%s' images %s and %s to have the same ids", name, image1, image2);
+        });
+        sa.assertAll();
     }
 
     public String[] getChannels() {

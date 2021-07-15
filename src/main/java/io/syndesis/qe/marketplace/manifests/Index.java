@@ -4,7 +4,6 @@ import static io.syndesis.qe.marketplace.util.HelperFunctions.readResource;
 import static io.syndesis.qe.marketplace.util.HelperFunctions.waitFor;
 
 import io.syndesis.qe.marketplace.openshift.OpenShiftService;
-import io.syndesis.qe.marketplace.quay.QuayService;
 import io.syndesis.qe.marketplace.quay.QuayUser;
 import io.syndesis.qe.marketplace.util.HelperFunctions;
 
@@ -34,18 +33,19 @@ public class Index {
     private String ocpName;
     private List<Bundle> bundles;
     private Opm opm;
-    private static final String BUILD_TOOL = System.getProperty("marketplace.build.tool", "docker");
+    static final String BUILD_TOOL = System.getProperty("marketplace.build.tool", "docker");
     static final String MARKETPLACE_NAMESPACE = "openshift-marketplace";
-    private static QuayService quaySvc;
     private static File configFile;
 
     private QuayUser quayUser;
+    private final OpenShiftService ocpService;
 
-    Index(String name, Opm opm, QuayUser quayUser) {
+    Index(String name, OpenShiftService ocpService, Opm opm, QuayUser quayUser) {
         this.name = name;
         bundles = new ArrayList<>();
         this.opm = opm;
         this.quayUser = quayUser;
+        this.ocpService = ocpService;
     }
 
     void createConfig(QuayUser user) {
@@ -73,7 +73,7 @@ public class Index {
         } else {
             opm.runOpmCmd("index", "add", "--bundles=" + bundleName, "--tag=" + this.name, "--build-tool=" + BUILD_TOOL, "--from-index=" + name);
         }
-        Bundle bundle = new Bundle(bundleName, this);
+        Bundle bundle = new Bundle(bundleName, this, ocpService);
         bundles.add(bundle);
         push();
         return bundle;
@@ -87,9 +87,6 @@ public class Index {
 
     @SneakyThrows
     private void push() {
-        if (quaySvc == null) {
-            quaySvc = new QuayService(quayUser, null, null);
-        }
         if (configFile == null || !configFile.exists()) {
             createConfig(quayUser);
         }
@@ -110,8 +107,8 @@ public class Index {
             .build();
     }
 
-    public void addIndexToCluster(OpenShiftService service, String catalogName) throws IOException, TimeoutException, InterruptedException {
-        OpenShiftClient ocp = service.getClient();
+    public void addIndexToCluster(String catalogName) throws IOException, TimeoutException, InterruptedException {
+        OpenShiftClient ocp = ocpService.getClient();
 
         String catalogSource = null;
         try {
@@ -131,7 +128,7 @@ public class Index {
             .getItems().stream().anyMatch(podFound), 5, 60 * 1000);
     }
 
-    public void removeIndexFromCluster(OpenShiftService service) {
-        service.getClient().customResource(catalogSourceIndex()).delete(MARKETPLACE_NAMESPACE, ocpName);
+    public void removeIndexFromCluster() {
+        ocpService.getClient().customResource(catalogSourceIndex()).delete(MARKETPLACE_NAMESPACE, ocpName);
     }
 }

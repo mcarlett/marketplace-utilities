@@ -8,11 +8,9 @@ import lombok.Data;
 @AllArgsConstructor
 @Builder
 public class OpenShiftConfiguration {
-
     private String namespace;
-    private String pullSecretName;
-    private String pullSecret;
-    private String quayOpsrcToken;
-    private String installedCSV;
-    private String icspConfigURL;
+    private String icspFile;
+    private String dockerRegistry;
+    private String dockerUsername;
+    private String dockerPassword;
 }

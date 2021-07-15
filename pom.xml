@@ -6,7 +6,11 @@
 
 	<groupId>io.syndesis.qe</groupId>
 	<artifactId>marketplace-utilities</artifactId>
-	<version>1.1-test</version>
+	<version>1.2</version>
+
+	<properties>
+		<docker.java.version>3.2.11</docker.java.version>
+	</properties>
 
 	<dependencies>
 		<dependency>
@@ -57,7 +61,23 @@
 			<version>2.4.0</version>
 		</dependency>
 
+		<dependency>
+			<groupId>com.github.docker-java</groupId>
+			<artifactId>docker-java</artifactId>
+			<version>${docker.java.version}</version>
+		</dependency>
 
+		<dependency>
+			<groupId>com.github.docker-java</groupId>
+			<artifactId>docker-java-transport-okhttp</artifactId>
+			<version>${docker.java.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.assertj</groupId>
+			<artifactId>assertj-core</artifactId>
+			<version>3.16.1</version>
+		</dependency>
 
 	</dependencies>
 

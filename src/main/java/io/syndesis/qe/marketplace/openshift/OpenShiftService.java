@@ -1,24 +1,16 @@
 package io.syndesis.qe.marketplace.openshift;
 
-import static io.syndesis.qe.marketplace.util.HelperFunctions.readResource;
-import static io.syndesis.qe.marketplace.util.HelperFunctions.runCmd;
 import static io.syndesis.qe.marketplace.util.HelperFunctions.waitFor;
 
-import io.syndesis.qe.marketplace.util.HelperFunctions;
-
-import org.apache.commons.codec.binary.StringUtils;
-import org.apache.commons.io.FileUtils;
+import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.io.IOUtils;
-import org.apache.http.impl.client.HttpClients;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.yaml.snakeyaml.Yaml;
 
 import com.jayway.jsonpath.DocumentContext;
 import com.jayway.jsonpath.JsonPath;
 
-import java.io.ByteArrayInputStream;
-import java.io.File;
-import java.io.IOException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -26,37 +18,31 @@ import java.util.Map;
 import java.util.concurrent.TimeoutException;
 
 import cz.xtf.core.openshift.OpenShift;
-import cz.xtf.core.openshift.OpenShifts;
 import io.fabric8.kubernetes.api.model.Secret;
-import io.fabric8.kubernetes.api.model.SecretList;
-import io.fabric8.kubernetes.api.model.apps.DeploymentList;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.dsl.base.CustomResourceDefinitionContext;
+import lombok.Getter;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 public class OpenShiftService {
 
-    private final String quayNamespace;
-    private final String quayPackageName;
-
     private final OpenShift openShiftClient;
 
+    @Getter
     private final OpenShiftConfiguration openShiftConfiguration;
+    @Getter
     private final OpenShiftUser adminUser;
 
+    @Getter
     private OpenShift openShiftClientAsRegularUser;
 
     public OpenShiftService(
-        String quayNamespace,
-        String quayPackageName,
         OpenShiftConfiguration openShiftConfiguration,
         OpenShiftUser adminOpenShiftUser,
         OpenShiftUser regularOpenShiftUser) {
 
-        this.quayNamespace = quayNamespace;
-        this.quayPackageName = quayPackageName;
         this.openShiftConfiguration = openShiftConfiguration;
 
         this.openShiftClient = OpenShift.get(
@@ -77,57 +63,6 @@ public class OpenShiftService {
         }
     }
 
-    public void deployOperator() throws IOException {
-        createNamespace();
-        createPullSecret();
-        disableDefaultSources();
-        createOpsrcToken();
-        createOpsrc();
-        createOperatorgroup();
-        createSubscription();
-
-        DeploymentList deploymentList =
-            openShiftClient.apps().deployments().inNamespace(openShiftConfiguration.getNamespace()).list();
-        if (deploymentList.getItems().size() != 1) {
-            log.error("Must be one deployment, actual number is " + deploymentList.getItems().size());
-            throw new IOException("There must be one deployment");
-        }
-
-        String operatorResourcesName = deploymentList.getItems().get(0).getMetadata().getName();
-
-        log.info("Operator pod name is '" + operatorResourcesName + "'");
-
-        linkPullSecret(operatorResourcesName);
-
-        log.info("Redeploying operator pod so it uses new pull secret");
-
-        scaleOperatorPod(0, operatorResourcesName);
-        scaleOperatorPod(1, operatorResourcesName);
-    }
-
-    public void deleteOpsrcToken() {
-        log.info("Deleting opsrc token");
-        SecretList secretList = openShiftClient.secrets().inNamespace("openshift-marketplace").list();
-        for (Secret secret : secretList.getItems()) {
-            if (StringUtils.equals(secret.getMetadata().getName(), quayPackageName + "-opsrctoken")) {
-                openShiftClient.secrets().inNamespace("openshift-marketplace").delete(secret);
-            }
-        }
-    }
-
-    public void deleteOperatorSource() throws IOException {
-        log.info("Deleting operator source for quay package '" + quayPackageName + "'");
-        CustomResourceDefinitionContext operatorSourceCrdContext = new CustomResourceDefinitionContext.Builder()
-            .withGroup("operators.coreos.com")
-            .withPlural("operatorsources")
-            .withScope("Namespaced")
-            .withVersion("v1")
-            .build();
-
-        openShiftClient.customResource(operatorSourceCrdContext)
-            .delete("openshift-marketplace", quayPackageName + "-opsrc");
-    }
-
     public void refreshOperators() {
         openShiftClient.pods().inNamespace("openshift-marketplace")
             .delete();
@@ -135,73 +70,108 @@ public class OpenShiftService {
 
     @SneakyThrows
     public void setupImageContentSourcePolicy() {
-        CustomResourceDefinitionContext operatorSourceCrdContext = new CustomResourceDefinitionContext.Builder()
-            .withGroup("operator.openshift.io")
-            .withPlural("imagecontentsourcepolicies")
+        CustomResourceDefinitionContext mcpContext = new CustomResourceDefinitionContext.Builder()
+            .withVersion("v1")
+            .withGroup("machineconfiguration.openshift.io")
             .withScope("Cluster")
-            .withVersion("v1alpha1")
+            .withPlural("machineconfigpools")
             .build();
-
-        try {
-            openShiftClient.customResource(operatorSourceCrdContext).get("brew-registry-operatorhub");
-        } catch (KubernetesClientException e) {
-            log.info("ICSP was not found, creating new!");
-            if (openShiftConfiguration.getIcspConfigURL() == null) {
-                throw new RuntimeException("ICSP is configured by a script. Set this script URL in OpenshiftConfiguration please.");
-            }
-            File script = new File("/tmp/brew-registry-script.sh");
+        //make sure nodes are not being updated
+        waitFor(() -> {
             try {
-                final String scriptSource = IOUtils.toString(new URL(openShiftConfiguration.getIcspConfigURL()), StandardCharsets.UTF_8);
-                final String scriptPatched = scriptSource.replaceAll("oc ", OpenShifts.getBinaryPath() + " ");
-                FileUtils.write(script, scriptPatched, StandardCharsets.UTF_8);
-                script.setExecutable(true);
-                runCmd(OpenShifts.getBinaryPath(), "login", "-u", adminUser.getUserName(), "-p", adminUser.getPassword(), adminUser.getApiUrl());
-                runCmd(script.getAbsolutePath());
-            } catch (Exception ex) {
-                log.error("Something went wrong while setting up ICSP, would you mind setting it manually?", e);
-                log.info("Run: curl {} | bash", openShiftConfiguration.getIcspConfigURL());
-                throw new RuntimeException(ex);
-            }
-            CustomResourceDefinitionContext mcpContext = new CustomResourceDefinitionContext.Builder()
-                .withVersion("v1")
-                .withGroup("machineconfiguration.openshift.io")
-                .withScope("Cluster")
-                .withPlural("machineconfigpools")
-                .build();
-
-            log.info("Waiting for OCP to pick up the ICSP config, this might take a while...");
-            waitFor(() -> {
                 JSONObject mcpList = new JSONObject(openShiftClient.customResource(mcpContext).list());
                 final JSONArray mcps = mcpList.getJSONArray("items");
-                boolean updating = false;
+                boolean updated = false;
                 for (int i = 0; i < mcps.length(); i++) {
                     final DocumentContext documentContext = JsonPath.parse(mcps.getJSONObject(i).toString());
                     boolean status =
-                        documentContext.read(".status.conditions[?(@.type==\"Updating\")].status").toString().toLowerCase().contains("true");
-                    updating |= status;
+                        documentContext.read(".status.conditions[?(@.type==\"Updated\")].status").toString().toLowerCase().contains("true");
+                    updated |= status;
                 }
-                return updating;
-            }, 10, 120 * 1000);
-
-            log.info("Nodes started upgrading, this will also take a while...");
-            waitFor(() -> {
+                return updated;
+            } catch (Exception ex) {
+                log.error("Got exception in the wait: ", ex);
+                return false;
+            }
+        }, 10, 3000);
+        if (openShiftConfiguration.getIcspFile() != null && openShiftConfiguration.getDockerRegistry() != null) {
+            final CustomResourceDefinitionContext icspContext =
+                new CustomResourceDefinitionContext.Builder().withGroup("operator.openshift.io").withPlural("imagecontentsourcepolicies")
+                    .withScope("Cluster").withVersion("v1alpha1").build();
+            final String icspSource = IOUtils.toString(new URL(openShiftConfiguration.getIcspFile()), StandardCharsets.UTF_8);
+            final String icspName = ((Map<String, String>) ((Map<String, Object>) new Yaml().load(icspSource)).get("metadata")).get("name");
+            try {
+                openShiftClient.customResource(icspContext).get(icspName);
+            } catch (KubernetesClientException ignored) {
+                log.info("ICSP was not found, creating new!");
                 try {
-                    JSONObject mcpList = new JSONObject(openShiftClient.customResource(mcpContext).list());
-                    final JSONArray mcps = mcpList.getJSONArray("items");
-                    boolean updated = false;
-                    for (int i = 0; i < mcps.length(); i++) {
-                        final DocumentContext documentContext = JsonPath.parse(mcps.getJSONObject(i).toString());
-                        boolean status =
-                            documentContext.read(".status.conditions[?(@.type==\"Updated\")].status").toString().toLowerCase().contains("true");
-                        updated |= status;
-                    }
-                    return updated;
+                    openShiftClient.customResource(icspContext).createOrReplace(icspSource);
                 } catch (Exception ex) {
-                    log.error("Got exception in the wait: ", ex);
-                    return false;
+                    log.error("Something went wrong while setting up ICSP, would you mind setting it manually?", ex);
+                    throw new RuntimeException(ex);
                 }
-            }, 10, 600 * 1000);
+                waitForMCP();
+            }
         }
+
+        final String globalPullSecret = new String(Base64.decodeBase64(
+            openShiftClient.secrets().inNamespace("openshift-config").withName("pull-secret").get().getData().get(".dockerconfigjson")));
+        if (!globalPullSecret.contains(openShiftConfiguration.getDockerRegistry())) {
+            final JSONObject secretJson = new JSONObject(globalPullSecret);
+            JSONObject auth = new JSONObject();
+            String authString = openShiftConfiguration.getDockerUsername() + ":" + openShiftConfiguration.getDockerPassword();
+            auth.put("username", openShiftConfiguration.getDockerUsername());
+            auth.put("password", openShiftConfiguration.getDockerPassword());
+            auth.put("auth", Base64.encodeBase64String(authString.getBytes(StandardCharsets.UTF_8)));
+            secretJson.getJSONObject("auths").put(openShiftConfiguration.getDockerRegistry(), auth);
+            log.info("Setting up global pull-secret");
+            openShiftClient.secrets().inNamespace("openshift-config").withName("pull-secret").edit()
+                .addToData(".dockerconfigjson", new String(Base64.encodeBase64(secretJson.toString().getBytes())))
+                .done();
+            waitForMCP();
+        }
+    }
+
+    private void waitForMCP() throws InterruptedException, TimeoutException {
+        CustomResourceDefinitionContext mcpContext = new CustomResourceDefinitionContext.Builder()
+            .withVersion("v1")
+            .withGroup("machineconfiguration.openshift.io")
+            .withScope("Cluster")
+            .withPlural("machineconfigpools")
+            .build();
+
+        log.info("Waiting for OCP to pick up new config, this might take a while...");
+        waitFor(() -> {
+            JSONObject mcpList = new JSONObject(openShiftClient.customResource(mcpContext).list());
+            final JSONArray mcps = mcpList.getJSONArray("items");
+            boolean updating = false;
+            for (int i = 0; i < mcps.length(); i++) {
+                final DocumentContext documentContext = JsonPath.parse(mcps.getJSONObject(i).toString());
+                boolean status =
+                    documentContext.read(".status.conditions[?(@.type==\"Updating\")].status").toString().toLowerCase().contains("true");
+                updating |= status;
+            }
+            return updating;
+        }, 10, 3000);
+
+        log.info("Nodes started upgrading, this will also take a while...");
+        waitFor(() -> {
+            try {
+                JSONObject mcpList = new JSONObject(openShiftClient.customResource(mcpContext).list());
+                final JSONArray mcps = mcpList.getJSONArray("items");
+                boolean updated = false;
+                for (int i = 0; i < mcps.length(); i++) {
+                    final DocumentContext documentContext = JsonPath.parse(mcps.getJSONObject(i).toString());
+                    boolean status =
+                        documentContext.read(".status.conditions[?(@.type==\"Updated\")].status").toString().toLowerCase().contains("true");
+                    updated |= status;
+                }
+                return updated;
+            } catch (Exception ex) {
+                log.error("Got exception in the wait: ", ex);
+                return false;
+            }
+        }, 10, 3000);
     }
 
     /**
@@ -230,190 +200,7 @@ public class OpenShiftService {
             .done();
     }
 
-    private void disableDefaultSources() throws IOException {
-        log.info("Disabling default sources on openshift");
-
-        CustomResourceDefinitionContext crdContext = new CustomResourceDefinitionContext.Builder()
-            .withGroup("config.openshift.io")
-            .withPlural("operatorhubs")
-            .withScope("Cluster")
-            .withVersion("v1")
-            .build();
-
-        openShiftClient.customResource(crdContext)
-            .createOrReplace("openshift-marketplace",
-                OpenShiftService.class.getResourceAsStream("/openshift/disable-default-sources.yaml"));
-    }
-
-    private void createOpsrcToken() throws IOException {
-        log.info("Creating operatorsource secret token");
-        Map<String, String> data = new HashMap<>();
-        data.put("token", openShiftConfiguration.getQuayOpsrcToken());
-
-        openShiftClient.inNamespace("openshift-marketplace").secrets().createOrReplaceWithNew()
-            .withNewMetadata()
-            .withName(quayPackageName + "-opsrctoken")
-            .withNamespace("openshift-marketplace")
-            .endMetadata()
-            .withData(data)
-            .withType("Opaque")
-            .done();
-    }
-
-    private void createOpsrc() throws IOException {
-        log.info("Creating operator source which points toward quay");
-
-        CustomResourceDefinitionContext operatorSourceCrdContext = new CustomResourceDefinitionContext.Builder()
-            .withGroup("operators.coreos.com")
-            .withPlural("operatorsources")
-            .withScope("Namespaced")
-            .withVersion("v1")
-            .build();
-
-        String operatorSourceYaml = readResource("openshift/create-operatorsource.yaml")
-            .replaceAll("PACKAGE_NAME", quayPackageName)
-            .replaceAll("QUAY_NAMESPACE", quayNamespace);
-
-        openShiftClient.customResource(operatorSourceCrdContext)
-            .createOrReplace("openshift-marketplace",
-                new ByteArrayInputStream(operatorSourceYaml.getBytes(StandardCharsets.UTF_8)));
-    }
-
-    private void createNamespace() throws IOException {
-        if (openShiftClient.getProject(openShiftConfiguration.getNamespace()) != null) {
-            log.info("Namespace exists, deleting namespace first");
-            openShiftClient.deleteProject(openShiftConfiguration.getNamespace());
-            try {
-                HelperFunctions.waitFor(
-                    () -> openShiftClient.getProject(openShiftConfiguration.getNamespace()) == null,
-                    1, 30);
-            } catch (InterruptedException | TimeoutException e) {
-                log.error("Namespace was not deleted");
-                throw new IOException("Namespace was not created", e);
-            }
-        }
-
-        log.info("Creating namespace");
-
-        if (openShiftClientAsRegularUser != null) {
-            openShiftClientAsRegularUser.createProjectRequest(openShiftConfiguration.getNamespace());
-        } else {
-            openShiftClient.createProjectRequest(openShiftConfiguration.getNamespace());
-        }
-
-        try {
-            HelperFunctions.waitFor(
-                () -> openShiftClient.getProject(openShiftConfiguration.getNamespace()) != null,
-                1, 30);
-        } catch (InterruptedException | TimeoutException e) {
-            log.error("Namespace was not created");
-            throw new IOException("Namespace was not created", e);
-        }
-    }
-
-    private void createPullSecret() throws IOException {
-        log.info("Creating pull secret");
-
-        if (openShiftConfiguration.getPullSecret() != null) {
-            log.info("Creating a pull secret with name " + openShiftConfiguration.getPullSecretName());
-            Map<String, String> pullSecretMap = new HashMap<>();
-            pullSecretMap.put(".dockerconfigjson", openShiftConfiguration.getPullSecret());
-
-            openShiftClient.secrets().createOrReplaceWithNew()
-                .withNewMetadata()
-                .withName(openShiftConfiguration.getPullSecretName())
-                .endMetadata()
-                .withData(pullSecretMap)
-                .withType("kubernetes.io/dockerconfigjson")
-                .done();
-        }
-    }
-
-    private void createOperatorgroup() throws IOException {
-        log.info("Creating operatorgroup");
-
-        CustomResourceDefinitionContext operatorGroupCrdContext = new CustomResourceDefinitionContext.Builder()
-            .withGroup("operators.coreos.com")
-            .withPlural("operatorgroups")
-            .withScope("Namespaced")
-            .withVersion("v1alpha2")
-            .build();
-
-        String operatorGroupYaml = readResource("openshift/create-operatorgroup.yaml")
-            .replaceAll("OPENSHIFT_PROJECT", openShiftConfiguration.getNamespace());
-
-        openShiftClient.customResource(operatorGroupCrdContext)
-            .createOrReplace(openShiftConfiguration.getNamespace(),
-                new ByteArrayInputStream(operatorGroupYaml.getBytes(StandardCharsets.UTF_8)));
-    }
-
-    private void createSubscription() throws IOException {
-        setupImageContentSourcePolicy();
-
-        log.info("Creating operator subscription");
-
-        String subscriptionYaml = readResource("openshift/create-subscription.yaml")
-            .replaceAll("PACKAGE_NAME", quayPackageName)
-            .replaceAll("OPENSHIFT_PROJECT", openShiftConfiguration.getNamespace());
-
-        if (openShiftConfiguration.getInstalledCSV() != null) {
-            subscriptionYaml = subscriptionYaml.replaceAll("STARTING_CSV", openShiftConfiguration.getInstalledCSV());
-        } else {
-            subscriptionYaml = subscriptionYaml.replaceAll("\\s*\\w*:\\s*STARTING_CSV", "");
-        }
-
-        CustomResourceDefinitionContext subscriptionCrdContext = new CustomResourceDefinitionContext.Builder()
-            .withGroup("operators.coreos.com")
-            .withPlural("subscriptions")
-            .withScope("Namespaced")
-            .withVersion("v1alpha1")
-            .build();
-
-        openShiftClient.customResource(subscriptionCrdContext)
-            .createOrReplace(openShiftConfiguration.getNamespace(),
-                new ByteArrayInputStream(subscriptionYaml.getBytes(StandardCharsets.UTF_8)));
-
-        try {
-            waitFor(() ->
-                    openShiftClient.inNamespace(openShiftConfiguration.getNamespace()).pods().list().getItems().size() == 1,
-                1, 2 * 60);
-        } catch (InterruptedException | TimeoutException e) {
-            log.error("There is no pod in project after waiting for 120 seconds");
-            throw new IOException("Pod has not been created and/or stared", e);
-        }
-    }
-
-    private void scaleOperatorPod(int scale, String operatorResourcesName) throws IOException {
-        openShiftClient
-            .apps().deployments().inNamespace(openShiftConfiguration.getNamespace())
-            .withName(operatorResourcesName).scale(scale);
-        try {
-            HelperFunctions.waitFor(
-                () -> openShiftClient.pods().inNamespace(openShiftConfiguration.getNamespace())
-                    .list().getItems().size() == scale,
-                1, 30
-            );
-        } catch (InterruptedException | TimeoutException e) {
-            log.error("Couldn't wait for pod to scale");
-            throw new IOException("Operator pod did not scale", e);
-        }
-    }
-
-    private void linkPullSecret(String operatorResourcesName) {
-        log.info("Linking pull secret to service account user");
-
-        HelperFunctions.linkPullSecret(
-            openShiftClient,
-            openShiftConfiguration.getNamespace(),
-            operatorResourcesName,
-            openShiftConfiguration.getPullSecretName());
-    }
-
     public OpenShift getClient() {
         return openShiftClient;
-    }
-
-    public OpenShiftUser getAdminUser() {
-        return adminUser;
     }
 }
