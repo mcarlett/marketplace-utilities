@@ -132,4 +132,11 @@ index.removeIndexFromCluster();
 
 Both services are stateful, so it's necessary to use same objects for cleanup.
 
+### Container platform
 
+By default, the docker platform is used. However, when you have installed **only** podman, you need to specify podman via System env
+(even though you are using docker alias for podman).
+
+```
+-Dmarketplace.container.tool=podman
+```
