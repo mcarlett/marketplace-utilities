@@ -60,7 +60,7 @@ import lombok.extern.slf4j.Slf4j;
 public class Bundle {
     @Getter
     private final String imageName;
-    private static final String CONTAINER_TOOL = "docker";
+    private static final String CONTAINER_TOOL = System.getProperty("marketplace.container.tool", "docker");
     @Getter
     private Map<String, String> annotations;
     @Getter
@@ -106,6 +106,7 @@ public class Bundle {
                 new File(destFolder, tarEntry.getName()).mkdirs();
             } else {
                 File result = new File(destFolder, tarEntry.getName());
+                result.getParentFile().mkdirs();
                 FileOutputStream fos = new FileOutputStream(result);
                 IOUtils.copy(tis, fos);
                 if (result.getName().endsWith(".tar")) {
@@ -347,11 +348,11 @@ public class Bundle {
                 final String dockerCfg = System.getProperty("DOCKER_CONFIG");
                 if (dockerCfg != null) {
                     if (BUILD_TOOL.equalsIgnoreCase("docker")) {
-                        HelperFunctions.runCmd(BUILD_TOOL, "--config", dockerCfg, "pull", image1);
-                        HelperFunctions.runCmd(BUILD_TOOL, "--config", dockerCfg, "pull", image2);
+                        HelperFunctions.runCmd(BUILD_TOOL, "pull", image1, "--config", dockerCfg);
+                        HelperFunctions.runCmd(BUILD_TOOL, "pull", image2, "--config", dockerCfg);
                     } else {
-                        HelperFunctions.runCmd(BUILD_TOOL, "--authfile", dockerCfg, "pull", image1);
-                        HelperFunctions.runCmd(BUILD_TOOL, "--authfile", dockerCfg, "pull", image2);
+                        HelperFunctions.runCmd(BUILD_TOOL,"pull", image1,  "--authfile", dockerCfg);
+                        HelperFunctions.runCmd(BUILD_TOOL, "pull", image2, "--authfile", dockerCfg);
                     }
                 } else {
                     HelperFunctions.runCmd(BUILD_TOOL, "pull", image1);

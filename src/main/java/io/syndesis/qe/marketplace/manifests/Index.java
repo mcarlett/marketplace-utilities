@@ -33,7 +33,7 @@ public class Index {
     private String ocpName;
     private List<Bundle> bundles;
     private Opm opm;
-    static final String BUILD_TOOL = System.getProperty("marketplace.build.tool", "docker");
+    static final String BUILD_TOOL = System.getProperty("marketplace.container.tool", "docker");
     static final String MARKETPLACE_NAMESPACE = "openshift-marketplace";
     private static File configFile;
 
@@ -91,9 +91,9 @@ public class Index {
             createConfig(quayUser);
         }
         if (BUILD_TOOL.equalsIgnoreCase("docker")) {
-            HelperFunctions.runCmd(BUILD_TOOL, "--config", configFile.getParent(), "push", name);
+            HelperFunctions.runCmd(BUILD_TOOL, "push", name, "--config", configFile.getParent());
         } else {
-            HelperFunctions.runCmd(BUILD_TOOL, "--authfile", configFile.getParent(), "push", name);
+            HelperFunctions.runCmd(BUILD_TOOL, "push", name, "--authfile", configFile.getAbsolutePath());
         }
     }
 
