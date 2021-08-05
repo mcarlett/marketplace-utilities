@@ -33,7 +33,7 @@ public class Index {
     private String ocpName;
     private List<Bundle> bundles;
     private Opm opm;
-    static final String BUILD_TOOL = System.getProperty("marketplace.container.tool", "docker");
+    public static final String CONTAINER_TOOL = System.getProperty("marketplace.container.tool", "docker");
     static final String MARKETPLACE_NAMESPACE = "openshift-marketplace";
     private static File configFile;
 
@@ -64,16 +64,16 @@ public class Index {
     }
 
     void pull() {
-        HelperFunctions.runCmd(BUILD_TOOL, "pull", this.name);
+        HelperFunctions.runCmd(CONTAINER_TOOL, "pull", this.name);
     }
 
     public Bundle addBundle(String bundleName) {
-        if (bundles.isEmpty()) {
-            opm.runOpmCmd("index", "add", "--bundles=" + bundleName, "--tag=" + this.name, "--build-tool=" + BUILD_TOOL);
-        } else {
-            opm.runOpmCmd("index", "add", "--bundles=" + bundleName, "--tag=" + this.name, "--build-tool=" + BUILD_TOOL, "--from-index=" + name);
-        }
         Bundle bundle = new Bundle(bundleName, this, ocpService);
+        if (bundles.isEmpty()) {
+            opm.runOpmCmd("index", "add", "--bundles=" + bundleName, "--tag=" + this.name, "--container-tool=" + CONTAINER_TOOL);
+        } else {
+            opm.runOpmCmd("index", "add", "--bundles=" + bundleName, "--tag=" + this.name, "--container-tool=" + CONTAINER_TOOL, "--from-index=" + name);
+        }
         bundles.add(bundle);
         push();
         return bundle;
@@ -90,10 +90,10 @@ public class Index {
         if (configFile == null || !configFile.exists()) {
             createConfig(quayUser);
         }
-        if (BUILD_TOOL.equalsIgnoreCase("docker")) {
-            HelperFunctions.runCmd(BUILD_TOOL, "push", name, "--config", configFile.getParent());
+        if (CONTAINER_TOOL.equalsIgnoreCase("docker")) {
+            HelperFunctions.runCmd(CONTAINER_TOOL, "--config", configFile.getParent(), "push", name);
         } else {
-            HelperFunctions.runCmd(BUILD_TOOL, "push", name, "--authfile", configFile.getAbsolutePath());
+            HelperFunctions.runCmd(CONTAINER_TOOL, "push", name, "--authfile", configFile.getAbsolutePath());
         }
     }
 

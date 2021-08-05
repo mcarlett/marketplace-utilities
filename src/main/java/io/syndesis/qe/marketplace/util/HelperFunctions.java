@@ -1,5 +1,7 @@
 package io.syndesis.qe.marketplace.util;
 
+import static io.syndesis.qe.marketplace.manifests.Index.CONTAINER_TOOL;
+
 import org.apache.commons.io.IOUtils;
 
 import java.io.BufferedReader;
@@ -7,7 +9,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.Charset;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 
@@ -67,6 +72,29 @@ public class HelperFunctions {
             }
         } catch (InterruptedException | IOException e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    public static void containerToolCmd(String action, String... args) {
+        final String dockerCfg = System.getProperty("DOCKER_CONFIG");
+        if (dockerCfg != null) {
+            if (CONTAINER_TOOL.equalsIgnoreCase("docker")) {
+                final List<String> cmdList = new ArrayList<>(Arrays.asList(CONTAINER_TOOL, "--config", dockerCfg, action));
+                cmdList.addAll(Arrays.asList(args));
+                final String[] cmd = cmdList.toArray(new String[0]);
+                HelperFunctions.runCmd(cmd);
+            } else {
+                final List<String> cmdList = new ArrayList<>(Arrays.asList(CONTAINER_TOOL, action));
+                cmdList.addAll(Arrays.asList(args));
+                cmdList.add("--authfile");
+                cmdList.add(dockerCfg + "/config.json");
+                String[] cmd = cmdList.toArray(new String[0]);
+                HelperFunctions.runCmd(cmd);
+            }
+        } else {
+            final List<String> cmdList = new ArrayList<>(Arrays.asList(CONTAINER_TOOL, action));
+            cmdList.addAll(Arrays.asList(args));
+            HelperFunctions.runCmd(cmdList.toArray(new String[0]));
         }
     }
 }

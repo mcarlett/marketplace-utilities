@@ -1,8 +1,7 @@
 package io.syndesis.qe.marketplace.manifests;
 
-import static io.syndesis.qe.marketplace.manifests.Index.BUILD_TOOL;
+import static io.syndesis.qe.marketplace.manifests.Index.CONTAINER_TOOL;
 import static io.syndesis.qe.marketplace.util.HelperFunctions.readResource;
-import static io.syndesis.qe.marketplace.util.HelperFunctions.runCmd;
 import static io.syndesis.qe.marketplace.util.HelperFunctions.waitFor;
 
 import static com.jayway.jsonpath.Criteria.where;
@@ -19,10 +18,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.yaml.snakeyaml.Yaml;
 
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.github.dockerjava.api.DockerClient;
-import com.github.dockerjava.api.async.ResultCallback;
-import com.github.dockerjava.api.model.PullResponseItem;
 import com.github.dockerjava.core.DefaultDockerClientConfig;
 import com.github.dockerjava.core.DockerClientConfig;
 import com.github.dockerjava.core.DockerClientImpl;
@@ -36,17 +32,14 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -60,7 +53,6 @@ import lombok.extern.slf4j.Slf4j;
 public class Bundle {
     @Getter
     private final String imageName;
-    private static final String CONTAINER_TOOL = System.getProperty("marketplace.container.tool", "docker");
     @Getter
     private Map<String, String> annotations;
     @Getter
@@ -147,7 +139,7 @@ public class Bundle {
     private void readMetadata() {
         Path tmpFolder = Files.createTempDirectory("bundle");
         String outputPath = tmpFolder.toAbsolutePath() + File.separator + "bundle.tar";
-        HelperFunctions.runCmd(CONTAINER_TOOL, "pull", imageName);
+        HelperFunctions.containerToolCmd("pull", imageName);
         HelperFunctions.runCmd(CONTAINER_TOOL, "save", imageName, "-o=" + outputPath);
 
         try (TarArchiveInputStream inputStream = new TarArchiveInputStream(new FileInputStream(outputPath))) {
@@ -205,6 +197,7 @@ public class Bundle {
 
     /**
      * Create a generic subscription CR
+     *
      * @param service openshift service
      * @param name name of the subscription
      * @param channel channel to subscribe to
@@ -227,6 +220,7 @@ public class Bundle {
 
     /**
      * Start updating the bundle to newer version
+     *
      * @param newBundle newer version of the bundle
      * @see Bundle#update(Bundle, boolean) for waiting for upgrade
      * @see Bundle#waitForUpdate(Bundle) for waiting for upgrade
@@ -250,6 +244,7 @@ public class Bundle {
 
     /**
      * Updated the currently installed bundle to a newer version.
+     *
      * @param newBundle newer version of the bundle
      * @param wait should the call wait for the update to finish?
      */
@@ -264,6 +259,7 @@ public class Bundle {
 
     /**
      * Wait for the bundle to be updated to the new version.
+     *
      * @param newBundle new version of the bundle
      */
     @SneakyThrows
@@ -315,7 +311,6 @@ public class Bundle {
 
         SoftAssertions sa = new SoftAssertions();
 
-
         DockerClientConfig standard = DefaultDockerClientConfig
             .createDefaultConfigBuilder()
             .build();
@@ -345,19 +340,8 @@ public class Bundle {
             }
 
             try {
-                final String dockerCfg = System.getProperty("DOCKER_CONFIG");
-                if (dockerCfg != null) {
-                    if (BUILD_TOOL.equalsIgnoreCase("docker")) {
-                        HelperFunctions.runCmd(BUILD_TOOL, "pull", image1, "--config", dockerCfg);
-                        HelperFunctions.runCmd(BUILD_TOOL, "pull", image2, "--config", dockerCfg);
-                    } else {
-                        HelperFunctions.runCmd(BUILD_TOOL,"pull", image1,  "--authfile", dockerCfg);
-                        HelperFunctions.runCmd(BUILD_TOOL, "pull", image2, "--authfile", dockerCfg);
-                    }
-                } else {
-                    HelperFunctions.runCmd(BUILD_TOOL, "pull", image1);
-                    HelperFunctions.runCmd(BUILD_TOOL, "pull", image2);
-                }
+                HelperFunctions.containerToolCmd("pull", image1);
+                HelperFunctions.containerToolCmd("pull", image2);
             } catch (Exception e) {
                 sa.fail("Couldn't pull image", e);
                 return;
