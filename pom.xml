@@ -28,7 +28,7 @@
 		<dependency>
 			<groupId>cz.xtf</groupId>
 			<artifactId>core</artifactId>
-			<version>0.16</version>
+			<version>0.23</version>
 		</dependency>
 
 		<dependency>
@@ -83,9 +83,9 @@
 
 	<repositories>
 		<repository>
-			<id>bintray-xtf-cz-xtf</id>
-			<name>Bintray XTF</name>
-			<url>https://dl.bintray.com/xtf-cz/xtf</url>
+			<id>jboss-releases-repository</id>
+			<name>JBoss Releases Repository</name>
+			<url>https://repository.jboss.org/nexus/content/groups/public/</url>
 			<snapshots>
 				<enabled>false</enabled>
 			</snapshots>
