@@ -3,10 +3,6 @@ package io.syndesis.qe.marketplace.manifests;
 import static io.syndesis.qe.marketplace.util.HelperFunctions.readResource;
 import static io.syndesis.qe.marketplace.util.HelperFunctions.waitFor;
 
-import io.syndesis.qe.marketplace.openshift.OpenShiftService;
-import io.syndesis.qe.marketplace.quay.QuayUser;
-import io.syndesis.qe.marketplace.util.HelperFunctions;
-
 import org.apache.commons.io.IOUtils;
 
 import java.io.File;
@@ -22,6 +18,9 @@ import java.util.function.Predicate;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.client.dsl.base.CustomResourceDefinitionContext;
 import io.fabric8.openshift.client.OpenShiftClient;
+import io.syndesis.qe.marketplace.openshift.OpenShiftService;
+import io.syndesis.qe.marketplace.quay.QuayUser;
+import io.syndesis.qe.marketplace.util.HelperFunctions;
 import lombok.Getter;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
@@ -129,6 +128,10 @@ public class Index {
     }
 
     public void removeIndexFromCluster() {
-        ocpService.getClient().customResource(catalogSourceIndex()).delete(MARKETPLACE_NAMESPACE, ocpName);
+        try {
+            ocpService.getClient().customResource(catalogSourceIndex()).delete(MARKETPLACE_NAMESPACE, ocpName);
+        } catch (IOException e) {
+            log.warn("Unable to remove index: ", e);
+        }
     }
 }
