@@ -8,19 +8,26 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.yaml.snakeyaml.Yaml;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.DocumentContext;
 import com.jayway.jsonpath.JsonPath;
 
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 import cz.xtf.core.openshift.OpenShift;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.dsl.base.CustomResourceDefinitionContext;
+import io.fabric8.openshift.api.model.operatorhub.manifests.PackageChannel;
+import io.fabric8.openshift.api.model.operatorhub.manifests.PackageManifest;
+
 import lombok.Getter;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
@@ -37,6 +44,8 @@ public class OpenShiftService {
 
     @Getter
     private OpenShift openShiftClientAsRegularUser;
+
+    private Map<String, List<PackageManifest>> catalog;
 
     public OpenShiftService(
         OpenShiftConfiguration openShiftConfiguration,
@@ -202,5 +211,76 @@ public class OpenShiftService {
 
     public OpenShift getClient() {
         return openShiftClient;
+    }
+
+    /**
+     * Retrieve the list of packages grouped by catalog sources.
+     * @param forceReload boolean, if the API should be always invoked and so the in-memory cache is ignored.
+     * @return {@link Map} collection that contains catalog source name (i.e. String 'redhat-operators') as key
+     * and {@link List} of {@link PackageManifest} as value.
+     */
+    public Map<String, List<PackageManifest>> getCatalog(boolean forceReload) {
+        if (catalog == null || forceReload) {
+            catalog = loadCatalog();
+        }
+        return catalog;
+    }
+
+    /**
+     * Invoke API to retrieve all CRD PackageManifest on 'openshift-marketplace' namespace
+     * @return {@link #catalog}
+     */
+    private Map<String, List<PackageManifest>> loadCatalog() {
+        AtomicReference<Map<String, List<PackageManifest>>> found = new AtomicReference<>();
+        CustomResourceDefinitionContext crds = new CustomResourceDefinitionContext.Builder()
+                .withVersion("v1")
+                .withKind("PackageManifest")
+                .withGroup("packages.operators.coreos.com")
+                .withScope("Namespaced")
+                .withPlural("packagemanifests")
+                .build();
+
+        final ObjectMapper mapper = new ObjectMapper();
+
+        openShiftClient.customResource(crds).list("openshift-marketplace").entrySet()
+                .stream().filter(entry -> "items".equals(entry.getKey())).findFirst().ifPresent( entry -> {
+                        found.set(((List<Map>) entry.getValue()).stream().collect(
+                                Collectors.groupingBy(pack -> (String) ((Map) pack.get("status")).get("catalogSource"),
+                                        HashMap::new,
+                                        Collectors.mapping(item -> mapper.convertValue(item.get("status"), PackageManifest.class), Collectors.toList())
+                                )));
+
+                    }
+                );
+
+        return found.get();
+    }
+
+    /**
+     * Retrieve the default channel of the operator with given name in given catalog source.
+     * @param source String, the catalog source
+     * @param operatorName String, the operator name as found in the catalog
+     * @param refreshCatalog boolean, if the catalog should be refreshed
+     * @return the {@link PackageChannel} found or {@link IllegalArgumentException} if not found
+     */
+    public PackageChannel getDefaultChannel(final String source, final String operatorName, boolean refreshCatalog) {
+        return getChannel(source, operatorName, null, refreshCatalog);
+    }
+
+    /**
+     * Retrieve the channel by name, of the operator with given name in given catalog source.
+     * @param source String, the catalog source
+     * @param operatorName String, the operator name as found in the catalog
+     * @param channelName String, the channel name as found in the catalog
+     * @param refreshCatalog boolean, if the catalog should be refreshed
+     * @return the {@link PackageChannel} found or {@link IllegalArgumentException} if not found
+     */
+    public PackageChannel getChannel(final String source, final String operatorName, final String channelName, boolean refreshCatalog) {
+        getCatalog(refreshCatalog);
+        PackageManifest found = catalog.get(source).stream().filter(pack -> operatorName.equals(pack.getPackageName()))
+                .findFirst().orElseThrow(() -> new IllegalArgumentException("Operator " + operatorName + " not found"));
+        String channelToUse = channelName != null ? channelName : found.getDefaultChannel();
+        return found.getChannels().stream().filter(ch -> channelToUse.equals(ch.getName())).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Channel " + channelToUse + " not found"));
     }
 }
