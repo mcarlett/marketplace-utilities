@@ -8,12 +8,16 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.yaml.snakeyaml.Yaml;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.DocumentContext;
 import com.jayway.jsonpath.JsonPath;
 
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
 
@@ -21,6 +25,9 @@ import cz.xtf.core.openshift.OpenShift;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.dsl.base.CustomResourceDefinitionContext;
+import io.fabric8.openshift.api.model.operatorhub.manifests.PackageChannel;
+import io.fabric8.openshift.api.model.operatorhub.manifests.PackageManifest;
+
 import lombok.Getter;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
@@ -202,5 +209,76 @@ public class OpenShiftService {
 
     public OpenShift getClient() {
         return openShiftClient;
+    }
+
+    /**
+     * Retrieve the list of packages grouped by catalog sources.
+     * @return {@link Map} collection that contains catalog source name (i.e. String 'redhat-operators') as key
+     * and {@link List} of {@link PackageManifest} as value.
+     */
+    public Map<String, List<PackageManifest>> getCatalog() {
+        return loadCatalog();
+    }
+
+    /**
+     * Invoke API to retrieve all CRD PackageManifest on 'openshift-marketplace' namespace
+     * @return Map, the catalog
+     */
+    private Map<String, List<PackageManifest>> loadCatalog() {
+
+        CustomResourceDefinitionContext crds = new CustomResourceDefinitionContext.Builder()
+                .withVersion("v1")
+                .withKind("PackageManifest")
+                .withGroup("packages.operators.coreos.com")
+                .withScope("Namespaced")
+                .withPlural("packagemanifests")
+                .build();
+
+        final ObjectMapper mapper = new ObjectMapper();
+
+        Map<String, List<PackageManifest>> catalogContent = new HashMap<>();
+        final JSONArray items = new JSONObject(openShiftClient.customResource(crds)
+                .list("openshift-marketplace")).getJSONArray("items");
+        int itemLen = items.length();
+        if (itemLen > 0) {
+            for (int i = 0; i < itemLen; i++) {
+                JSONObject status = items.getJSONObject(i).getJSONObject("status");
+                String catalogSource = status.getString("catalogSource");
+                List<PackageManifest> manifests = catalogContent.getOrDefault(catalogSource, new ArrayList<>());
+                try {
+                    manifests.add(mapper.readValue(status.toString(), PackageManifest.class));
+                } catch (JsonProcessingException e) {
+                    log.error("Error while reading operator status: ", e);
+                }
+                catalogContent.put(catalogSource, manifests);
+            }
+        }
+
+        return catalogContent;
+    }
+
+    /**
+     * Retrieve the default channel of the operator with given name in given catalog source.
+     * @param source String, the catalog source
+     * @param operatorName String, the operator name as found in the catalog
+     * @return the {@link PackageChannel} found or {@link IllegalArgumentException} if not found
+     */
+    public PackageChannel getDefaultChannel(final String source, final String operatorName) {
+        return getChannel(source, operatorName, null);
+    }
+
+    /**
+     * Retrieve the channel by name, of the operator with given name in given catalog source.
+     * @param source String, the catalog source
+     * @param operatorName String, the operator name as found in the catalog
+     * @param channelName String, the channel name as found in the catalog
+     * @return the {@link PackageChannel} found or {@link IllegalArgumentException} if not found
+     */
+    public PackageChannel getChannel(final String source, final String operatorName, final String channelName) {
+        PackageManifest found = getCatalog().get(source).stream().filter(pack -> operatorName.equals(pack.getPackageName()))
+                .findFirst().orElseThrow(() -> new IllegalArgumentException("Operator " + operatorName + " not found"));
+        String channelToUse = channelName != null ? channelName : found.getDefaultChannel();
+        return found.getChannels().stream().filter(ch -> channelToUse.equals(ch.getName())).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Channel " + channelToUse + " not found"));
     }
 }
