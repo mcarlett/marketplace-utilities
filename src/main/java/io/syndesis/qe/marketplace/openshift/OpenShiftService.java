@@ -8,18 +8,18 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.yaml.snakeyaml.Yaml;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.DocumentContext;
 import com.jayway.jsonpath.JsonPath;
 
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Collectors;
 
 import cz.xtf.core.openshift.OpenShift;
 import io.fabric8.kubernetes.api.model.Secret;
@@ -44,8 +44,6 @@ public class OpenShiftService {
 
     @Getter
     private OpenShift openShiftClientAsRegularUser;
-
-    private Map<String, List<PackageManifest>> catalog;
 
     public OpenShiftService(
         OpenShiftConfiguration openShiftConfiguration,
@@ -215,23 +213,19 @@ public class OpenShiftService {
 
     /**
      * Retrieve the list of packages grouped by catalog sources.
-     * @param forceReload boolean, if the API should be always invoked and so the in-memory cache is ignored.
      * @return {@link Map} collection that contains catalog source name (i.e. String 'redhat-operators') as key
      * and {@link List} of {@link PackageManifest} as value.
      */
-    public Map<String, List<PackageManifest>> getCatalog(boolean forceReload) {
-        if (catalog == null || forceReload) {
-            catalog = loadCatalog();
-        }
-        return catalog;
+    public Map<String, List<PackageManifest>> getCatalog() {
+        return loadCatalog();
     }
 
     /**
      * Invoke API to retrieve all CRD PackageManifest on 'openshift-marketplace' namespace
-     * @return {@link #catalog}
+     * @return Map, the catalog
      */
     private Map<String, List<PackageManifest>> loadCatalog() {
-        AtomicReference<Map<String, List<PackageManifest>>> found = new AtomicReference<>();
+
         CustomResourceDefinitionContext crds = new CustomResourceDefinitionContext.Builder()
                 .withVersion("v1")
                 .withKind("PackageManifest")
@@ -242,29 +236,35 @@ public class OpenShiftService {
 
         final ObjectMapper mapper = new ObjectMapper();
 
-        openShiftClient.customResource(crds).list("openshift-marketplace").entrySet()
-                .stream().filter(entry -> "items".equals(entry.getKey())).findFirst().ifPresent( entry -> {
-                        found.set(((List<Map>) entry.getValue()).stream().collect(
-                                Collectors.groupingBy(pack -> (String) ((Map) pack.get("status")).get("catalogSource"),
-                                        HashMap::new,
-                                        Collectors.mapping(item -> mapper.convertValue(item.get("status"), PackageManifest.class), Collectors.toList())
-                                )));
+        Map<String, List<PackageManifest>> catalogContent = new HashMap<>();
+        final JSONArray items = new JSONObject(openShiftClient.customResource(crds)
+                .list("openshift-marketplace")).getJSONArray("items");
+        int itemLen = items.length();
+        if (itemLen > 0) {
+            for (int i = 0; i < itemLen; i++) {
+                JSONObject status = items.getJSONObject(i).getJSONObject("status");
+                String catalogSource = status.getString("catalogSource");
+                List<PackageManifest> manifests = catalogContent.getOrDefault(catalogSource, new ArrayList<>());
+                try {
+                    manifests.add(mapper.readValue(status.toString(), PackageManifest.class));
+                } catch (JsonProcessingException e) {
+                    log.error("Error while reading operator status: ", e);
+                }
+                catalogContent.put(catalogSource, manifests);
+            }
+        }
 
-                    }
-                );
-
-        return found.get();
+        return catalogContent;
     }
 
     /**
      * Retrieve the default channel of the operator with given name in given catalog source.
      * @param source String, the catalog source
      * @param operatorName String, the operator name as found in the catalog
-     * @param refreshCatalog boolean, if the catalog should be refreshed
      * @return the {@link PackageChannel} found or {@link IllegalArgumentException} if not found
      */
-    public PackageChannel getDefaultChannel(final String source, final String operatorName, boolean refreshCatalog) {
-        return getChannel(source, operatorName, null, refreshCatalog);
+    public PackageChannel getDefaultChannel(final String source, final String operatorName) {
+        return getChannel(source, operatorName, null);
     }
 
     /**
@@ -272,12 +272,10 @@ public class OpenShiftService {
      * @param source String, the catalog source
      * @param operatorName String, the operator name as found in the catalog
      * @param channelName String, the channel name as found in the catalog
-     * @param refreshCatalog boolean, if the catalog should be refreshed
      * @return the {@link PackageChannel} found or {@link IllegalArgumentException} if not found
      */
-    public PackageChannel getChannel(final String source, final String operatorName, final String channelName, boolean refreshCatalog) {
-        getCatalog(refreshCatalog);
-        PackageManifest found = catalog.get(source).stream().filter(pack -> operatorName.equals(pack.getPackageName()))
+    public PackageChannel getChannel(final String source, final String operatorName, final String channelName) {
+        PackageManifest found = getCatalog().get(source).stream().filter(pack -> operatorName.equals(pack.getPackageName()))
                 .findFirst().orElseThrow(() -> new IllegalArgumentException("Operator " + operatorName + " not found"));
         String channelToUse = channelName != null ? channelName : found.getDefaultChannel();
         return found.getChannels().stream().filter(ch -> channelToUse.equals(ch.getName())).findFirst()
