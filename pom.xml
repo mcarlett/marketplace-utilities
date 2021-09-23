@@ -6,7 +6,7 @@
 
 	<groupId>io.syndesis.qe</groupId>
 	<artifactId>marketplace-utilities</artifactId>
-	<version>1.2</version>
+	<version>1.2-1</version>
 
 	<properties>
 		<docker.java.version>3.2.11</docker.java.version>
@@ -29,6 +29,12 @@
 			<groupId>cz.xtf</groupId>
 			<artifactId>core</artifactId>
 			<version>0.23</version>
+		</dependency>
+
+		<dependency>
+			<groupId>io.fabric8</groupId>
+			<artifactId>openshift-model-operatorhub</artifactId>
+			<version>4.13.3</version>
 		</dependency>
 
 		<dependency>

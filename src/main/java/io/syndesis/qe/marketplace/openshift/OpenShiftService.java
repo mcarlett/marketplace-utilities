@@ -77,6 +77,10 @@ public class OpenShiftService {
 
     @SneakyThrows
     public void setupImageContentSourcePolicy() {
+        if (openShiftConfiguration.getIcspFile() == null || openShiftConfiguration.getDockerRegistry() == null) {
+            log.info("ICSP was not set up, skipping creation.");
+            return;
+        }
         CustomResourceDefinitionContext mcpContext = new CustomResourceDefinitionContext.Builder()
             .withVersion("v1")
             .withGroup("machineconfiguration.openshift.io")
@@ -101,24 +105,22 @@ public class OpenShiftService {
                 return false;
             }
         }, 10, 3000);
-        if (openShiftConfiguration.getIcspFile() != null && openShiftConfiguration.getDockerRegistry() != null) {
-            final CustomResourceDefinitionContext icspContext =
-                new CustomResourceDefinitionContext.Builder().withGroup("operator.openshift.io").withPlural("imagecontentsourcepolicies")
-                    .withScope("Cluster").withVersion("v1alpha1").build();
-            final String icspSource = IOUtils.toString(new URL(openShiftConfiguration.getIcspFile()), StandardCharsets.UTF_8);
-            final String icspName = ((Map<String, String>) ((Map<String, Object>) new Yaml().load(icspSource)).get("metadata")).get("name");
+        final CustomResourceDefinitionContext icspContext =
+            new CustomResourceDefinitionContext.Builder().withGroup("operator.openshift.io").withPlural("imagecontentsourcepolicies")
+                .withScope("Cluster").withVersion("v1alpha1").build();
+        final String icspSource = IOUtils.toString(new URL(openShiftConfiguration.getIcspFile()), StandardCharsets.UTF_8);
+        final String icspName = ((Map<String, String>) ((Map<String, Object>) new Yaml().load(icspSource)).get("metadata")).get("name");
+        try {
+            openShiftClient.customResource(icspContext).get(icspName);
+        } catch (KubernetesClientException ignored) {
+            log.info("ICSP was not found, creating new!");
             try {
-                openShiftClient.customResource(icspContext).get(icspName);
-            } catch (KubernetesClientException ignored) {
-                log.info("ICSP was not found, creating new!");
-                try {
-                    openShiftClient.customResource(icspContext).createOrReplace(icspSource);
-                } catch (Exception ex) {
-                    log.error("Something went wrong while setting up ICSP, would you mind setting it manually?", ex);
-                    throw new RuntimeException(ex);
-                }
-                waitForMCP();
+                openShiftClient.customResource(icspContext).createOrReplace(icspSource);
+            } catch (Exception ex) {
+                log.error("Something went wrong while setting up ICSP, would you mind setting it manually?", ex);
+                throw new RuntimeException(ex);
             }
+            waitForMCP();
         }
 
         final String globalPullSecret = new String(Base64.decodeBase64(
@@ -213,6 +215,7 @@ public class OpenShiftService {
 
     /**
      * Retrieve the list of packages grouped by catalog sources.
+     *
      * @return {@link Map} collection that contains catalog source name (i.e. String 'redhat-operators') as key
      * and {@link List} of {@link PackageManifest} as value.
      */
@@ -222,23 +225,24 @@ public class OpenShiftService {
 
     /**
      * Invoke API to retrieve all CRD PackageManifest on 'openshift-marketplace' namespace
+     *
      * @return Map, the catalog
      */
     private Map<String, List<PackageManifest>> loadCatalog() {
 
         CustomResourceDefinitionContext crds = new CustomResourceDefinitionContext.Builder()
-                .withVersion("v1")
-                .withKind("PackageManifest")
-                .withGroup("packages.operators.coreos.com")
-                .withScope("Namespaced")
-                .withPlural("packagemanifests")
-                .build();
+            .withVersion("v1")
+            .withKind("PackageManifest")
+            .withGroup("packages.operators.coreos.com")
+            .withScope("Namespaced")
+            .withPlural("packagemanifests")
+            .build();
 
         final ObjectMapper mapper = new ObjectMapper();
 
         Map<String, List<PackageManifest>> catalogContent = new HashMap<>();
         final JSONArray items = new JSONObject(openShiftClient.customResource(crds)
-                .list("openshift-marketplace")).getJSONArray("items");
+            .list("openshift-marketplace")).getJSONArray("items");
         int itemLen = items.length();
         if (itemLen > 0) {
             for (int i = 0; i < itemLen; i++) {
@@ -259,6 +263,7 @@ public class OpenShiftService {
 
     /**
      * Retrieve the default channel of the operator with given name in given catalog source.
+     *
      * @param source String, the catalog source
      * @param operatorName String, the operator name as found in the catalog
      * @return the {@link PackageChannel} found or {@link IllegalArgumentException} if not found
@@ -269,6 +274,7 @@ public class OpenShiftService {
 
     /**
      * Retrieve the channel by name, of the operator with given name in given catalog source.
+     *
      * @param source String, the catalog source
      * @param operatorName String, the operator name as found in the catalog
      * @param channelName String, the channel name as found in the catalog
@@ -276,9 +282,9 @@ public class OpenShiftService {
      */
     public PackageChannel getChannel(final String source, final String operatorName, final String channelName) {
         PackageManifest found = getCatalog().get(source).stream().filter(pack -> operatorName.equals(pack.getPackageName()))
-                .findFirst().orElseThrow(() -> new IllegalArgumentException("Operator " + operatorName + " not found"));
+            .findFirst().orElseThrow(() -> new IllegalArgumentException("Operator " + operatorName + " not found"));
         String channelToUse = channelName != null ? channelName : found.getDefaultChannel();
         return found.getChannels().stream().filter(ch -> channelToUse.equals(ch.getName())).findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Channel " + channelToUse + " not found"));
+            .orElseThrow(() -> new IllegalArgumentException("Channel " + channelToUse + " not found"));
     }
 }
