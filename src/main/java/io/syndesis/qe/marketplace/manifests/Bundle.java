@@ -158,10 +158,7 @@ public class Bundle {
         createSubscription(getPackageName(), getDefaultChannel(), getCSVName());
     }
 
-    private void createOperatorGroup() throws IOException {
-        OpenShift ocp = ocpService.getClient();
-        String namespace = ocpService.getClient().getNamespace();
-
+    private static void createOperatorGroup(OpenShift ocp, String namespace) throws IOException {
         CustomResourceDefinitionContext operatorGroupCrdContext = new CustomResourceDefinitionContext.Builder()
             .withGroup("operators.coreos.com")
             .withPlural("operatorgroups")
@@ -173,6 +170,13 @@ public class Bundle {
             .replaceAll("OPENSHIFT_PROJECT", namespace);
 
         ocp.customResource(operatorGroupCrdContext).createOrReplace(namespace, operatorGroupYaml);
+    }
+
+    private void createOperatorGroup() throws IOException {
+        OpenShift ocp = ocpService.getClient();
+        String namespace = ocpService.getClient().getNamespace();
+
+        createOperatorGroup(ocp, namespace);
     }
 
     public void createSubscription(String name, String channel, String startingCSV) throws IOException {
@@ -206,6 +210,7 @@ public class Bundle {
      */
     @SneakyThrows
     public static void createSubscription(OpenShiftService service, String name, String channel, String startingCSV, String source) {
+        service.setupImageContentSourcePolicy();
         OpenShift ocp = service.getClient();
         String namespace = service.getClient().getNamespace();
         String subscription = HelperFunctions.readResource("openshift/create-subscriptionindex.yaml");
@@ -215,6 +220,7 @@ public class Bundle {
             .replaceAll("NAME", name)
             .replaceAll("SOURCE", source);
 
+        createOperatorGroup(ocp, namespace);
         ocp.customResource(subscriptionContext()).createOrReplace(namespace, subscription);
     }
 
