@@ -166,10 +166,11 @@ public class Bundle {
             .withVersion("v1alpha2")
             .build();
 
-        String operatorGroupYaml = readResource("openshift/create-operatorgroup.yaml")
-            .replaceAll("OPENSHIFT_PROJECT", namespace);
-
-        ocp.customResource(operatorGroupCrdContext).createOrReplace(namespace, operatorGroupYaml);
+        if (((List)ocp.customResource(operatorGroupCrdContext).list(namespace).get("items")).isEmpty()) {
+            String operatorGroupYaml = readResource("openshift/create-operatorgroup.yaml")
+                    .replaceAll("OPENSHIFT_PROJECT", namespace);
+            ocp.customResource(operatorGroupCrdContext).createOrReplace(namespace, operatorGroupYaml);
+        }
     }
 
     private void createOperatorGroup() throws IOException {
